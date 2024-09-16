@@ -16,6 +16,8 @@ from dn3.trainable.models import StrideClassifier, Classifier
 from dn3.trainable.layers import Flatten, Permute
 from dn3.utils import DN3ConfigException
 
+# This is the offical implementation of BENDR model in paper: Kostas D, Aroca-Ouellette S, Rudzicz F. BENDR: Using transformers and a contrastive self-supervised learning task to learn from massive amounts of EEG data[J]. Frontiers in Human Neuroscience, 2021, 15: 653659.
+# Code from https://github.com/SPOClab-ca/BENDR
 
 class LinearHeadBENDR(Classifier):
 
