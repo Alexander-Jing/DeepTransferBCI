@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-# @Time    : 2023/07/07
-# @Author  : Siyang Li
-# @File    : ttime.py
 import numpy as np
 import argparse
 import os
@@ -23,6 +20,12 @@ import gc
 import sys
 import time
 
+# This is the implementation of T-TIME from paper
+# Li S, Wang Z, Luo H, et al. T-TIME: Test-time information maximization ensemble for plug-and-play BCIs[J]. IEEE Transactions on Biomedical Engineering, 2023.
+# @Time    : 2023/07/07
+# @Author  : Siyang Li
+# @File    : ttime.py
+# from github https://github.com/sylyoung/DeepTransferEEG/tree/main
 
 def TTIME(loader, model, args, balanced=True):
     # "T-TIME: Test-Time Information Maximization Ensemble for Plug-and-Play BCIs"

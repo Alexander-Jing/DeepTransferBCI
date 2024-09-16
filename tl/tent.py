@@ -20,7 +20,7 @@ import gc
 import sys
 import time
 
-# This is the implementation of Tent from paper:
+# This is the implementation of Tent from paper
 # Wang D, Shelhamer E, Liu S, et al. Tent: Fully test-time adaptation by entropy minimization[J]. arXiv preprint arXiv:2006.10726, 2020.
 # @Time    : 2023/07/07
 # @Author  : Siyang Li

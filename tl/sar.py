@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-# @Time    : 2023/07/07
-# @Author  : Siyang Li
-# @File    : sar.py
 import numpy as np
 import argparse
 import os
@@ -23,6 +20,12 @@ from models.sam import SAM
 import gc
 import sys
 
+# This is the implementation of SAR from paper:
+# Niu S, Wu J, Zhang Y, et al. Towards stable test-time adaptation in dynamic wild world[J]. arXiv preprint arXiv:2302.12400, 2023.
+# @Time    : 2023/07/07
+# @Author  : Siyang Li
+# @File    : sar.py
+# from github https://github.com/sylyoung/DeepTransferEEG/tree/main
 
 def SAR(loader, model, args, balanced=True):
     # SAR

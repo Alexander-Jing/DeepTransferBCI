@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-# @Time    : 2023/07/07
-# @Author  : Siyang Li
-# @File    : pl.py
 import numpy as np
 import argparse
 import os
@@ -22,6 +19,12 @@ from sklearn.metrics import roc_auc_score, accuracy_score
 import gc
 import sys
 
+# This is the implementation of PL from paper:
+# Lee D H. Pseudo-label: The simple and efficient semi-supervised learning method for deep neural networks[C]//Workshop on challenges in representation learning, ICML. 2013, 3(2): 896.
+# @Time    : 2023/07/07
+# @Author  : Siyang Li
+# @File    : pl.py
+# from github https://github.com/sylyoung/DeepTransferEEG/tree/main
 
 def PL(loader, model, args, balanced=True):
     # Pseudo-Labeling

@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-# @Time    : 2024/2/4
-# @Author  : Siyang Li
-# @File    : delta.py
 import numpy as np
 import argparse
 import os
@@ -23,6 +20,12 @@ import gc
 import sys
 import time
 
+# This is the implementation of DELTA from paper
+# Zhao B, Chen C, Xia S T. Delta: degradation-free fully test-time adaptation[J]. arXiv preprint arXiv:2301.13018, 2023.
+# @Time    : 2024/2/4
+# @Author  : Siyang Li
+# @File    : delta.py
+# from github https://github.com/sylyoung/DeepTransferEEG/tree/main
 
 def DELTA(loader, model, args, balanced=True):
     # DELTA

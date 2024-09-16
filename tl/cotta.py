@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-# @Time    : 2023/07/07
-# @Author  : Siyang Li
-# @File    : cotta.py
 import numpy as np
 import argparse
 import os
@@ -23,6 +20,12 @@ import gc
 import sys
 import time
 
+# This is the implementation of Cotta from paper:
+# Q. Wang et al., “Continual test-time domain adaptation,” in Proc. IEEE/CVF Conf. Comput. Vis. Pattern Recognit., 2022, pp. 7201–7211.
+# @Time    : 2023/07/07
+# @Author  : Siyang Li
+# @File    : cotta.py
+# from github https://github.com/sylyoung/DeepTransferEEG/tree/main
 
 def CoTTA_func(loader, model, args, balanced=True):
     # CoTTA

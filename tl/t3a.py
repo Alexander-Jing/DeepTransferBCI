@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-# @Time    : 2023/07/07
-# @Author  : Siyang Li
-# @File    : t3a.py
 import numpy as np
 import argparse
 import os
@@ -22,6 +19,12 @@ from utils.loss import Entropy
 import gc
 import sys
 
+# This is the implementation of T3A from paper:
+# Iwasawa Y, Matsuo Y. Test-time classifier adjustment module for model-agnostic domain generalization[J]. Advances in Neural Information Processing Systems, 2021, 34: 2427-2440.
+# @Time    : 2023/07/07
+# @Author  : Siyang Li
+# @File    : t3a.py
+# from github https://github.com/sylyoung/DeepTransferEEG/tree/main
 
 def T3A(loader, model, args, balanced=True, weights=None):
     # T3A

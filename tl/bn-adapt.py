@@ -20,7 +20,7 @@ import gc
 import sys
 import time
 
-# This is the implementation of model BN-adapt from paper
+# This is the implementation of model BN-adapt from paper: 
 # Schneider S, Rusak E, Eck L, et al. Improving robustness against common corruptions by covariate shift adaptation
 # [J].Advances in neural information processing systems, 2020, 33: 11539-11551.
 # @Time    : 2023/07/07
