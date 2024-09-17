@@ -6,6 +6,7 @@ import os.path as osp
 import os
 import numpy as np
 import random
+import argparse
 
 import torch as tr
 import torch.nn as nn
@@ -18,7 +19,7 @@ from sklearn.metrics import balanced_accuracy_score, accuracy_score, roc_auc_sco
 from scipy.linalg import fractional_matrix_power
 from learn2learn.data.transforms import NWays, KShots, LoadData
 
-from utils.alg_utils import EA, EA_online
+from tl.utils.alg_utils import EA, EA_online
 
 from moabb.datasets import BNCI2014001, BNCI2014002, BNCI2014008, BNCI2014009, BNCI2015003, BNCI2015004, EPFLP300, \
     BNCI2014004, BNCI2015001
@@ -529,3 +530,12 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
 
     return dset_loaders
 
+def str2bool(v):
+    if isinstance(v, bool):
+       return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')

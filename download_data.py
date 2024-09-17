@@ -1,13 +1,17 @@
 import os
+import sys
 
 import numpy as np
-import moabb
+import argparse
+from easydict import EasyDict as edict
+from tl.utils.utils import str2bool
 
+import moabb
 from moabb.datasets import BNCI2014001, BNCI2014002, BNCI2015001
 from moabb.paradigms import MotorImagery, P300
 
 
-def dataset_to_file(dataset_name, data_save):
+def dataset_to_file(dataset_name, data_save, data_path='./data/'):
     moabb.set_log_level("ERROR")
     if dataset_name == 'BNCI2014001':
         dataset = BNCI2014001()
@@ -29,13 +33,13 @@ def dataset_to_file(dataset_name, data_save):
         print("labels:", ar_unique)
         print("Counts:", cnts)
         print(X.shape, labels.shape)
-        if not os.path.exists('./data/'):
-            os.makedirs('./data/')
-        if not os.path.exists('./data/' + dataset_name + '/'):
-            os.makedirs('./data/' + dataset_name + '/')
-        np.save('./data/' + dataset_name + '/X', X)
-        np.save('./data/' + dataset_name + '/labels', labels)
-        meta.to_csv('./data/' + dataset_name + '/meta.csv')
+        if not os.path.exists(data_path):
+            os.makedirs(data_path)
+        if not os.path.exists(data_path + dataset_name + '/'):
+            os.makedirs(data_path + dataset_name + '/')
+        np.save(data_path + dataset_name + '/X', X)
+        np.save(data_path + dataset_name + '/labels', labels)
+        meta.to_csv(data_path + dataset_name + '/meta.csv')
         print('done!')
     else:
         if isinstance(paradigm, MotorImagery):
@@ -48,9 +52,24 @@ def dataset_to_file(dataset_name, data_save):
 
 if __name__ == '__main__':
 
-    datasets = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001']
-    for dataset_name in datasets:
-        info = dataset_to_file(dataset_name, data_save=True)
+    # parse args
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset_name', type=str, default='BNCI2014001', help='the data set name, now support BNCI2014001, BNCI2014002, BNCI2015001 from moabb')
+    parser.add_argument('--data_save', type=str2bool, default=True, help='whether save the data to file')
+    parser.add_argument('--data_path', type=str, default='./data/', help='the path to save the data')
+    args = parser.parse_args()
+
+    dataset_name = args.dataset_name
+    data_save = args.data_save
+    data_path = args.data_path
+
+    print('dataset_name: {}, type: {}'.format(dataset_name, type(dataset_name)))
+    print('data_save: {}, type: {}'.format(data_save, type(data_save)))
+    print('data_path: {}, type: {}'.format(data_path, type(data_path)))
+
+    # load the dataset
+    if dataset_name in ['BNCI2014001', 'BNCI2014002', 'BNCI2015001']:
+        info = dataset_to_file(dataset_name, data_save=data_save, data_path=data_path)
 
     '''
     BNCI2014001

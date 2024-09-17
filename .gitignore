@@ -143,3 +143,4 @@ feature_ssda.py
 # Folders about dataset and experiment runs
 runs/
 data/
+logs/
