@@ -4,6 +4,8 @@ import random
 import pandas as pd
 import torch as tr
 import torch.utils.data
+
+from tl.utils.utils import str2bool
 from sklearn.metrics import accuracy_score
 from utils.dataloader import data_process
 

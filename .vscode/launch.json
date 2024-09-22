@@ -38,6 +38,24 @@
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
             },
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: PL",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tl/pl.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "BNCI2014001",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--log_path", "./logs/pl/",
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
         }
     ]
 }

@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
 
+from tl.utils.utils import str2bool
 from utils.network import backbone_net
 from utils.LogRecord import LogRecord
 from utils.dataloader import read_mi_combine_tar
@@ -19,6 +20,7 @@ from models.sam import SAM
 
 import gc
 import sys
+import time
 
 # This is the implementation of SAR from paper:
 # Niu S, Wu J, Zhang Y, et al. Towards stable test-time adaptation in dynamic wild world[J]. arXiv preprint arXiv:2302.12400, 2023.
@@ -257,11 +259,32 @@ def train_target(args):
 
 if __name__ == '__main__':
 
+    # parse args
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset_name', type=str, default='BNCI2014001', help='the data set name, now support BNCI2014001, BNCI2014002, BNCI2015001 from moabb')
+    parser.add_argument('--data_save', type=str2bool, default=True, help='whether save the data to file')
+    parser.add_argument('--data_path', type=str, default='./data/', help='the path to save the data')
+    parser.add_argument('--log_path', type=str, default='./logs/', help='the path to save the logs')
+    parser.add_argument('--gpu_idx', type=int, default=0, help='index of GPU')
+    args = parser.parse_args()
+
+    data_name = args.dataset_name
+    data_save = args.data_save
+    data_path = args.data_path
+    log_path = args.log_path
+    gpu_idx = args.gpu_idx
+
+    print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
+    print('data_save: {}, type: {}'.format(data_save, type(data_save)))
+    print('data_path: {}, type: {}'.format(data_path, type(data_path)))
+    print('log_path: {}, type: {}'.format(log_path, type(log_path)))
+    print('gpu_idx: {}, type: {}'.format(gpu_idx, type(gpu_idx)))
+
     data_name_list = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4']
 
     dct = pd.DataFrame(columns=['dataset', 'avg', 'std', 's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13'])
 
-    for data_name in data_name_list:
+    if data_name in data_name_list:
         # N: number of subjects, chn: number of channels
         if data_name == 'BNCI2014001': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 2, 1001, 250, 144, 248
         if data_name == 'BNCI2014002': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 14, 15, 2, 2561, 512, 100, 640
@@ -316,8 +339,8 @@ if __name__ == '__main__':
 
         # GPU device id
         try:
-            device_id = str(sys.argv[1])
-            os.environ["CUDA_VISIBLE_DEVICES"] = device_id
+            device_id = gpu_idx
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
             args.data_env = 'gpu' if torch.cuda.device_count() != 0 else 'local'
         except:
             args.data_env = 'local'
@@ -336,8 +359,8 @@ if __name__ == '__main__':
             print(args.SEED)
             print(args)
 
-            args.local_dir = './data/' + str(data_name) + '/'
-            args.result_dir = './logs/'
+            args.local_dir = data_path + str(data_name) + '/'
+            args.result_dir = log_path
             my_log = LogRecord(args)
             my_log.log_init()
             my_log.record('=' * 50 + '\n' + os.path.basename(__file__) + '\n' + '=' * 50)
@@ -389,4 +412,4 @@ if __name__ == '__main__':
         dct = dct.append(result_dct, ignore_index=True)
 
     # save results to csv
-    dct.to_csv('./logs/' + str(args.method) + ".csv")
+    dct.to_csv(log_path + str(args.method) + ".csv")
