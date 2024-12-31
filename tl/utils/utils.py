@@ -510,7 +510,7 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
         Xt_copy = Xt_copy.cuda()
     data_tar_online = Data.TensorDataset(Xt_copy, Yt)
 
-    # for online TL test
+    # for online TL test, the test data arrived sequentially one-by-one in the online setting
     dset_loaders["Target-Online"] = Data.DataLoader(data_tar_online, batch_size=1, shuffle=False, drop_last=False)
 
     # for online imbalanced dataset

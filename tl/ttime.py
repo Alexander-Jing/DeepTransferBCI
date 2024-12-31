@@ -410,7 +410,7 @@ if __name__ == '__main__':
         total_acc = []
 
         # update multiple models, independently, from the source models
-        for s in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]:
+        for s in [1, 2, 3, 4, 5]:
             args.SEED = s
 
             fix_random_seed(args.SEED)
