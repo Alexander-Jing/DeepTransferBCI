@@ -438,11 +438,13 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
     train_bs = args.batch_size
 
     Xt_copy = Xt
+    # using the offline Euclidean alignment (EA) for alignment of subjects in the corresponding domains
     if args.align:
         # offline EA
         Xs = data_alignment(Xs, args.N - 1, args)
         Xt = data_alignment(Xt, 1, args)
 
+    # data transform for model classification in torch form
     Xs, Ys = tr.from_numpy(Xs).to(
         tr.float32), tr.from_numpy(Ys.reshape(-1, )).to(tr.long)
     Xs = Xs.unsqueeze_(3)
@@ -455,6 +457,7 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
     if 'EEGNet' in args.backbone:
         Xt = Xt.permute(0, 3, 1, 2)
 
+    # GPU settings
     if args.data_env != 'local':
         Xs, Ys, Xt, Yt = Xs.cuda(), Ys.cuda(), Xt.cuda(), Yt.cuda()
 
@@ -469,6 +472,7 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
     dset_loaders["Source"] = Data.DataLoader(data_src, batch_size=train_bs * 3, shuffle=False, drop_last=False)
     dset_loaders["Target"] = Data.DataLoader(data_tar, batch_size=train_bs * 3, shuffle=False, drop_last=False)
 
+    # use the incremental EA for the target domain in an online form, so the target data do not need to be incrementally aligned in the TTA experiment (It's pre-aligned)
     if args.method == 'EEGNet':
         # IEA baseline EEGNet results.
         # For other TL TTA approaches, IEA is done on-the-fly at test time
@@ -511,6 +515,7 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
     data_tar_online = Data.TensorDataset(Xt_copy, Yt)
 
     # for online TL test, the test data arrived sequentially one-by-one in the online setting
+    # data "Target-Online" haven't been incrementally aligned 
     dset_loaders["Target-Online"] = Data.DataLoader(data_tar_online, batch_size=1, shuffle=False, drop_last=False)
 
     # for online imbalanced dataset
@@ -518,6 +523,7 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
     class_0_ids = torch.where(Yt == 0)[0][:args.trial_num // 2]
     class_1_ids = torch.where(Yt == 1)[0][:args.trial_num // 4]
     all_ids = torch.cat([class_0_ids, class_1_ids])
+    # imbalanced data haven't been aligned any more
     if args.data_env != 'local':
         data_tar_imb = Data.TensorDataset(Xt_copy[all_ids].cuda(), Yt[all_ids].cuda())
     else:

@@ -61,7 +61,7 @@
             "name": "Python: TTIME",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/ttime.py",
+            "program": "${workspaceFolder}/tl/ttime_debug.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -69,6 +69,7 @@
                 "--data_save", "True",
                 "--data_path", "./data/",
                 "--log_path", "./logs/ttime/",
+                "--use_pretrained_model", "False",
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
