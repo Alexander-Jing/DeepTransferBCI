@@ -4,23 +4,27 @@
 # @File    : dataloader.py
 import numpy as np
 from sklearn import preprocessing
+import os
+import scipy.io as sio
 from utils.data_utils import traintest_split_cross_subject, traintest_split_domain_classifier, traintest_split_multisource, traintest_split_domain_classifier_pretest, traintest_split_multisource
 
 
-def data_process(dataset):
+def data_process(args):
     '''
 
     :param dataset: str, dataset name
     :return: X, y, num_subjects, paradigm, sample_rate
     '''
+    dataset = args.data
 
     if dataset == 'BNCI2014001-4':
         X = np.load('./data/' + 'BNCI2014001' + '/X.npy')
         y = np.load('./data/' + 'BNCI2014001' + '/labels.npy')
-    else:
+        print(X.shape, y.shape)
+    elif dataset != 'MI-hand_elbow':
         X = np.load('./data/' + dataset + '/X.npy')
         y = np.load('./data/' + dataset + '/labels.npy')
-    print(X.shape, y.shape)
+        print(X.shape, y.shape)
 
     num_subjects, paradigm, sample_rate = None, None, None
 
@@ -91,10 +95,38 @@ def data_process(dataset):
         indices = np.concatenate(indices, axis=0)
         X = X[indices]
         y = y[indices]
+    elif dataset == 'MI-hand_elbow':
+        # hand_elbow dataset is MI of movements of hand and elbow on the same side of the limb
+        # dataset paper: 
+        # Ma X, Qiu S, He H. Multi-channel EEG recording during motor imagery of different joints from the same limb[J]. Scientific data, 2020, 7(1): 191.
+        # three classes: rest, hand and elbow
+        paradigm = 'MI'
+        num_subjects = 25
+        sample_rate = 200
+        ch_num = 62
+        X = None
+        y = None
+
+        folder_path = args.data_path_MI
+        for num in range(num_subjects):
+            sub_file = f'{(num+1):03}'
+            sub_mat = sio.loadmat(os.path.join(folder_path, 'sub-' + sub_file, 'eeg', 'sub-' + sub_file + '_task-motorimagery_eeg.mat'))
+            # each subject's MI data (hand and elbow) is 15*40 trials, each trial contains 4s data with 62 channels and 250 sampling rate
+            sub_task_data = sub_mat['task_data'].reshape(-1, 62, 800)
+            sub_task_label = sub_mat['task_label'].reshape(-1, 1)
+
+            # concatenate all subjects' data
+            if X is None:
+                X = sub_task_data
+                y = sub_task_label
+            else:
+                X = np.concatenate((X, sub_task_data), axis=0)
+                y = np.concatenate((y, sub_task_label), axis=0)
 
     le = preprocessing.LabelEncoder()
     y = le.fit_transform(y)
     print('data shape:', X.shape, ' labels shape:', y.shape)
+    # the data loading from .mat file has been checked, but further subject source-target spliting needs checking
     return X, y, num_subjects, paradigm, sample_rate, ch_num
 
 
@@ -196,7 +228,7 @@ def read_mi_combine_tar(args):
         # Continual TTA
         X, y, num_subjects, paradigm, sample_rate, ch_num = data_process_secondsession(args.data)
     else:
-        X, y, num_subjects, paradigm, sample_rate, ch_num = data_process(args.data)
+        X, y, num_subjects, paradigm, sample_rate, ch_num = data_process(args)
 
     src_data, src_label, tar_data, tar_label = traintest_split_cross_subject(args.data, X, y, num_subjects, args.idt)
 

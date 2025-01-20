@@ -82,21 +82,21 @@ cudnn.deterministic = True
 # Convolution module
 # use conv to capture local features, instead of postion embedding.
 class PatchEmbedding(nn.Module):
-    def __init__(self, emb_size=40):
+    def __init__(self, ch=62, conv_output=40, emb_size=40):
         # self.patch_size = patch_size
         super().__init__()
 
         self.shallownet = nn.Sequential(
-            nn.Conv2d(1, 40, (1, 25), (1, 1)),
-            nn.Conv2d(40, 40, (22, 1), (1, 1)),
-            nn.BatchNorm2d(40),
+            nn.Conv2d(1, conv_output, (1, 25), (1, 1)),
+            nn.Conv2d(conv_output, conv_output, (ch, 1), (1, 1)),
+            nn.BatchNorm2d(conv_output),
             nn.ELU(),
             nn.AvgPool2d((1, 75), (1, 15)),  # pooling acts as slicing to obtain 'patch' along the time dimension as in ViT
             nn.Dropout(0.5),
         )
 
         self.projection = nn.Sequential(
-            nn.Conv2d(40, emb_size, (1, 1), stride=(1, 1)),  # transpose, conv could enhance fiting ability slightly
+            nn.Conv2d(conv_output, emb_size, (1, 1), stride=(1, 1)),  # transpose, conv could enhance fiting ability slightly
             Rearrange('b e (h) (w) -> b (h w) e'),
         )
 
@@ -202,18 +202,18 @@ class ClassificationHead(nn.Sequential):
             nn.Linear(emb_size, n_classes)
         )
         self.fc = nn.Sequential(
-            nn.Linear(2440, 256),
+            nn.Linear(43240, 256),
             nn.ELU(),
             nn.Dropout(0.5),
             nn.Linear(256, 32),
             nn.ELU(),
             nn.Dropout(0.3),
-            nn.Linear(32, 4)
+            nn.Linear(32, n_classes)
         )
 
     def forward(self, x):
-        x = x.contiguous().view(x.size(0), -1)
-        out = self.fc(x)
+        # x = x.contiguous().view(x.size(0), -1)
+        out = self.clshead(x)
         return x, out
 
 

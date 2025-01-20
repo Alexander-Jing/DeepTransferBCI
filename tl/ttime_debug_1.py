@@ -17,10 +17,15 @@ from utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
 from utils.loss import Entropy
 from sklearn.metrics import roc_auc_score, accuracy_score
+from tl.models.Conformer import Conformer
 
 import gc
 import sys
 import time
+
+gpus = [0]
+os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(map(str, gpus))
 
 # This is the implementation of T-TIME from paper
 # Li S, Wang Z, Luo H, et al. T-TIME: Test-time information maximization ensemble for plug-and-play BCIs[J]. IEEE Transactions on Biomedical Engineering, 2023.
@@ -210,12 +215,28 @@ def train_target(args):
         extra_string = ''
     X_src, y_src, X_tar, y_tar = read_mi_combine_tar(args)
     print('X_src, y_src, X_tar, y_tar:', X_src.shape, y_src.shape, X_tar.shape, y_tar.shape)
-    dset_loaders = data_loader(X_src, y_src, X_tar, y_tar, args)
+    
     args.sample_rate = 6  # to set EEGNet kernal as 3
-    netF, netC = backbone_net(args, return_type='xy')
+    
+    if args.backbone == 'EEGNet':
+        netF, netC = backbone_net(args, return_type='xy')
+    else:
+        former = Conformer(emb_size=40, n_classes=args.class_num)
+    
     if args.data_env != 'local':
-        netF, netC = netF.cuda(), netC.cuda()
-    base_network = nn.Sequential(netF, netC)
+        if args.backbone == 'EEGNet':
+            netF, netC = netF.cuda(), netC.cuda()
+        else:
+            former = former.cuda()
+            former = nn.DataParallel(former, device_ids=[i for i in range(len(gpus))])
+            
+    
+    if args.backbone == 'EEGNet':
+        base_network = nn.Sequential(netF, netC)
+    else:
+        base_network = former.cuda()
+
+    dset_loaders = data_loader(X_src, y_src, X_tar, y_tar, args)
 
     if args.max_epoch == 0:
         if args.align:
@@ -227,8 +248,12 @@ def train_target(args):
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt', map_location=torch.device('cpu')))
     else:
         criterion = nn.CrossEntropyLoss()
-        optimizer_f = optim.Adam(netF.parameters(), lr=args.lr)
-        optimizer_c = optim.Adam(netC.parameters(), lr=args.lr)
+        if args.backbone == 'EEGNet':
+            optimizer_f = optim.Adam(netF.parameters(), lr=args.lr)
+            optimizer_c = optim.Adam(netC.parameters(), lr=args.lr)
+        else:
+            optimizer_f = optim.Adam(former.parameters(), lr=args.lr, betas=(0.5,0.999))
+            
 
         max_iter = args.max_epoch * len(dset_loaders["source"])
         interval_iter = max_iter // args.max_epoch
@@ -252,11 +277,16 @@ def train_target(args):
 
             classifier_loss = criterion(outputs_source, labels_source)
 
-            optimizer_f.zero_grad()
-            optimizer_c.zero_grad()
-            classifier_loss.backward()
-            optimizer_f.step()
-            optimizer_c.step()
+            if args.backbone == 'EEGNet':
+                optimizer_f.zero_grad()
+                optimizer_c.zero_grad()
+                classifier_loss.backward()
+                optimizer_f.step()
+                optimizer_c.step()
+            else:
+                optimizer_f.zero_grad()
+                classifier_loss.backward()
+                optimizer_f.step()
 
             if iter_num % interval_iter == 0 or iter_num == max_iter:
                 base_network.eval()
@@ -375,7 +405,7 @@ if __name__ == '__main__':
             max_epoch = 100
 
         # learning rate
-        lr = 0.001
+        lr = 0.0002
 
         # test batch size
         test_batch = 8
@@ -405,7 +435,7 @@ if __name__ == '__main__':
                                   data_path_MI = data_path_MI,)
 
         args.method = 'T-TIME'
-        args.backbone = 'EEGNet'
+        args.backbone = 'Conformer'
 
         # train batch size
         args.batch_size = 32

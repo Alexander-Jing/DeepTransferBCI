@@ -35,6 +35,7 @@ def traintest_split_cross_subject(dataset, X, y, num_subjects, test_subject_id):
     train_y = np.concatenate(labels_subjects, axis=0)
     print('Test subject s' + str(test_subject_id))
     print('Training/Test split:', train_x.shape, test_x.shape)
+
     return train_x, train_y, test_x, test_y
 
 

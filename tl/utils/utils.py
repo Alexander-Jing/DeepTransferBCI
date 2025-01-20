@@ -437,7 +437,7 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
     dset_loaders = {}
     train_bs = args.batch_size
 
-    Xt_copy = Xt
+    Xt_copy = Xt.copy()  # in the original code, Xt_copy = Xt, this will cause Xt_copy to be changed by Xt
     # using the offline Euclidean alignment (EA) for alignment of subjects in the corresponding domains
     if args.align:
         # offline EA
@@ -447,14 +447,16 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
     # data transform for model classification in torch form
     Xs, Ys = tr.from_numpy(Xs).to(
         tr.float32), tr.from_numpy(Ys.reshape(-1, )).to(tr.long)
-    Xs = Xs.unsqueeze_(3)
-    if 'EEGNet' in args.backbone:
+    
+    if 'EEGNet' in args.backbone or 'Conformer' in args.backbone:
+        Xs = Xs.unsqueeze_(3)
         Xs = Xs.permute(0, 3, 1, 2)
 
     Xt, Yt = tr.from_numpy(Xt).to(
         tr.float32), tr.from_numpy(Yt.reshape(-1, )).to(tr.long)
-    Xt = Xt.unsqueeze_(3)
-    if 'EEGNet' in args.backbone:
+    
+    if 'EEGNet' in args.backbone or 'Conformer' in args.backbone:
+        Xt = Xt.unsqueeze_(3)
         Xt = Xt.permute(0, 3, 1, 2)
 
     # GPU settings
@@ -508,14 +510,14 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
 
     Xt_copy = tr.from_numpy(Xt_copy).to(tr.float32)
     Xt_copy = Xt_copy.unsqueeze_(3)
-    if 'EEGNet' in args.backbone:
+    if 'EEGNet' in args.backbone or 'Conformer' in args.backbone:
         Xt_copy = Xt_copy.permute(0, 3, 1, 2)
     if args.data_env != 'local':
         Xt_copy = Xt_copy.cuda()
     data_tar_online = Data.TensorDataset(Xt_copy, Yt)
 
     # for online TL test, the test data arrived sequentially one-by-one in the online setting
-    # data "Target-Online" haven't been incrementally aligned 
+    # data "Target-Online" haven't been incrementally aligned nor offline EA aligned
     dset_loaders["Target-Online"] = Data.DataLoader(data_tar_online, batch_size=1, shuffle=False, drop_last=False)
 
     # for online imbalanced dataset
@@ -545,3 +547,7 @@ def str2bool(v):
         return False
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
+    
+def makedir_if_not_exist(specified_dir):
+    if not os.path.exists(specified_dir):
+        os.makedirs(specified_dir)

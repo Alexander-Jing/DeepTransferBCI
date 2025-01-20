@@ -75,6 +75,46 @@
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
             },
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: TTIME-hand-elbow",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tl/ttime_debug.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "MI-hand_elbow",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--data_path_MI", "/home/jyt/workspace/transfer_models/datasets_MI/hand_elbow/derivatives",
+                "--log_path", "./logs/ttime-debug/",
+                "--use_pretrained_model", "False",
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: TTIME-hand-elbow-conformer",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tl/ttime_debug_1.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "MI-hand_elbow",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--data_path_MI", "/home/jyt/workspace/transfer_models/datasets_MI/hand_elbow/derivatives",
+                "--log_path", "./logs/ttime-debug-1/",
+                "--use_pretrained_model", "False",
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
         }
     ]
 }
