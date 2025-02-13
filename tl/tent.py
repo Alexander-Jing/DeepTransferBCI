@@ -96,9 +96,9 @@ def Tent_func(loader, model, args, balanced=True):
                 if (i + 1) == args.test_batch:
                     # Tent mode initialize
                     model = configure_model(model)
-                    params, param_names = collect_params(model)
-                    optimizer = torch.optim.Adam(params, lr=args.lr)
-                    tented_model = Tent(model, optimizer)
+                    params, param_names = collect_params(model)  # collect the Collect the affine scale + shift parameters from batch norms of the model
+                    optimizer = torch.optim.Adam(params, lr=args.lr)  # set the optimizer for the affine scale + shift parameters
+                    tented_model = Tent(model, optimizer)  # update the model
 
                 if args.align:
                     batch_test = np.copy(data_cum[i - args.test_batch + 1:i + 1])

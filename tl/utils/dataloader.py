@@ -21,7 +21,7 @@ def data_process(args):
         X = np.load('./data/' + 'BNCI2014001' + '/X.npy')
         y = np.load('./data/' + 'BNCI2014001' + '/labels.npy')
         print(X.shape, y.shape)
-    elif dataset != 'MI-hand_elbow':
+    elif dataset != 'MI-hand_elbow' and dataset != 'MI-elbow_rest' and dataset != 'MI-hand_rest':
         X = np.load('./data/' + dataset + '/X.npy')
         y = np.load('./data/' + dataset + '/labels.npy')
         print(X.shape, y.shape)
@@ -99,7 +99,7 @@ def data_process(args):
         # hand_elbow dataset is MI of movements of hand and elbow on the same side of the limb
         # dataset paper: 
         # Ma X, Qiu S, He H. Multi-channel EEG recording during motor imagery of different joints from the same limb[J]. Scientific data, 2020, 7(1): 191.
-        # three classes: rest, hand and elbow
+        # three classes: rest, hand and elbow, in this setting, we only use the hand and elbow classes.
         paradigm = 'MI'
         num_subjects = 25
         sample_rate = 200
@@ -122,11 +122,106 @@ def data_process(args):
             else:
                 X = np.concatenate((X, sub_task_data), axis=0)
                 y = np.concatenate((y, sub_task_label), axis=0)
+    
+    elif dataset == 'MI-hand_rest':
+        # hand_elbow dataset is MI of movements of hand and elbow on the same side of the limb
+        # dataset paper: 
+        # Ma X, Qiu S, He H. Multi-channel EEG recording during motor imagery of different joints from the same limb[J]. Scientific data, 2020, 7(1): 191.
+        # three classes: rest, hand and elbow, in this setting, we only use the hand and rest classes.
+        paradigm = 'MI'
+        num_subjects = 25
+        sample_rate = 200
+        ch_num = 62
+        X = None
+        y = None
+
+        folder_path = args.data_path_MI
+        for num in range(num_subjects):
+            sub_file = f'{(num+1):03}'
+            sub_mat = sio.loadmat(os.path.join(folder_path, 'sub-' + sub_file, 'eeg', 'sub-' + sub_file + '_task-motorimagery_eeg.mat'))
+            # each subject's MI data (hand and elbow) is 15*40 trials, each trial contains 4s data with 62 channels and 250 sampling rate
+            sub_task_data = sub_mat['task_data'].reshape(-1, 62, 800)
+            sub_task_label = sub_mat['task_label'].reshape(-1, 1)
+            sub_rest_data = sub_mat['rest_data'].reshape(-1, 62, 800)
+
+            # in this setting, we want to use the data of hand and rest classes, we use data of rest to take the place of data of elbow
+            # Find indices where the label is 2 (elbow)
+            label_indices = np.where(sub_task_label == 2)[0]
+            # Ensure the number of samples to be replaced matches the number of available replacement samples
+            assert len(label_indices) <= sub_rest_data.shape[0], "The number of samples with label 2 is greater than the available replacement samples"
+            # Replace samples
+            for idx, label_idx in enumerate(label_indices):
+                sub_task_data[label_idx] = sub_rest_data[idx]
+
+            
+            """
+            # for debug
+            test_id = 514
+            _sub_test_data = sub_task_data[int(test_id)]
+            _sub_test_labe = sub_task_label[int(test_id)]
+            _rest_test_idx = np.where(label_indices==int(test_id))
+            _rest_test_data = sub_rest_data[_rest_test_idx]
+            """
+            
+            # concatenate all subjects' data
+            if X is None:
+                X = sub_task_data
+                y = sub_task_label
+            else:
+                X = np.concatenate((X, sub_task_data), axis=0)
+                y = np.concatenate((y, sub_task_label), axis=0)
+    
+    elif dataset == 'MI-elbow_rest':
+        # hand_elbow dataset is MI of movements of hand and elbow on the same side of the limb
+        # dataset paper: 
+        # Ma X, Qiu S, He H. Multi-channel EEG recording during motor imagery of different joints from the same limb[J]. Scientific data, 2020, 7(1): 191.
+        # three classes: rest, hand and elbow, in this setting, we only use the hand and rest classes.
+        paradigm = 'MI'
+        num_subjects = 25
+        sample_rate = 200
+        ch_num = 62
+        X = None
+        y = None
+
+        folder_path = args.data_path_MI
+        for num in range(num_subjects):
+            sub_file = f'{(num+1):03}'
+            sub_mat = sio.loadmat(os.path.join(folder_path, 'sub-' + sub_file, 'eeg', 'sub-' + sub_file + '_task-motorimagery_eeg.mat'))
+            # each subject's MI data (hand and elbow) is 15*40 trials, each trial contains 4s data with 62 channels and 250 sampling rate
+            sub_task_data = sub_mat['task_data'].reshape(-1, 62, 800)
+            sub_task_label = sub_mat['task_label'].reshape(-1, 1)
+            sub_rest_data = sub_mat['rest_data'].reshape(-1, 62, 800)
+
+            # in this setting, we want to use the data of elbow and rest classes, we use data of rest to take the place of data of hand
+            # Find indices where the label is 1 (hand)
+            label_indices = np.where(sub_task_label == 1)[0]
+            # Ensure the number of samples to be replaced matches the number of available replacement samples
+            assert len(label_indices) <= sub_rest_data.shape[0], "The number of samples with label 2 is greater than the available replacement samples"
+            # Replace samples
+            for idx, label_idx in enumerate(label_indices):
+                sub_task_data[label_idx] = sub_rest_data[idx]
+
+            """
+            # for debug
+            test_id = 114
+            _sub_test_data = sub_task_data[int(test_id)]
+            _sub_test_label = sub_task_label[int(test_id)]
+            _rest_test_idx = np.where(label_indices==int(test_id))
+            _rest_test_data = sub_rest_data[_rest_test_idx]
+            """
+
+            # concatenate all subjects' data
+            if X is None:
+                X = sub_task_data
+                y = sub_task_label
+            else:
+                X = np.concatenate((X, sub_task_data), axis=0)
+                y = np.concatenate((y, sub_task_label), axis=0)
 
     le = preprocessing.LabelEncoder()
     y = le.fit_transform(y)
     print('data shape:', X.shape, ' labels shape:', y.shape)
-    # the data loading from .mat file has been checked, but further subject source-target spliting needs checking
+    
     return X, y, num_subjects, paradigm, sample_rate, ch_num
 
 

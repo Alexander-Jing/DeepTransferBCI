@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
 import csv
+import copy
 
 from tl.utils.utils import str2bool
 from utils.network import backbone_net
@@ -75,7 +76,7 @@ def TTIME(loader, model, args, balanced=True):
             if i == 0:
                 sample_test = data_cum.reshape(args.chn, args.time_sample_num)
             else:
-                sample_test = data_cum[i].reshape(args.chn, args.time_sample_num)
+                sample_test = data_cum[i].reshape(args.chn, args.time_sample_num)  # get the ith sample for IEA and evaluation
             # update reference matrix
             R = EA_online(sample_test, R, i)
 
@@ -125,6 +126,11 @@ def TTIME(loader, model, args, balanced=True):
             else:
                 batch_test = torch.from_numpy(batch_test).to(torch.float32)
 
+            if args.momentum:
+                # copy the parameters of the model
+                model_k = copy.deepcopy(model)
+
+            # update target model
             start_time = time.time()
             for step in range(args.steps):
 
@@ -154,6 +160,14 @@ def TTIME(loader, model, args, balanced=True):
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+
+            if args.momentum:
+                # Momentum update for the model parameters
+                with torch.no_grad():
+                    for param_q, param_k in zip(model.parameters(), model_k.parameters()):
+                        param_k.data = param_k.data * args.momentum_param + param_q.data * (1. - args.momentum_param)
+                # Update the model
+                model = copy.deepcopy(model_k)
 
             TTA_time = time.time()
             if args.calc_time:
@@ -194,13 +208,13 @@ def TTIME(loader, model, args, balanced=True):
         if args.data_name == 'BNCI2014001-4':
             y_pred = np.array(y_pred).reshape(-1, )  # multiclass
         else:
-            y_pred = np.array(y_pred).reshape(-1, args.class_num)[:, 1]  # binary
+            y_pred = np.array(y_pred).reshape(-1, args.class_num)  # binary
     else:
         predict = torch.from_numpy(np.array(y_pred)).to(torch.float32).reshape(-1, args.class_num)
-        y_pred = np.array(predict).reshape(-1, args.class_num)[:, 1]  # binary
+        y_pred = np.array(predict).reshape(-1, args.class_num)  # binary
         score = roc_auc_score(y_true, y_pred)
 
-    return score * 100, y_pred
+    return score * 100, (y_pred, predict, y_true)
 
 
 def train_target(args):
@@ -293,10 +307,10 @@ def train_target(args):
     print('executing TTA...')
 
     if args.balanced:
-        acc_t_te, y_pred = TTIME(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
+        acc_t_te, (y_pred, predict, y_true) = TTIME(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
         log_str = 'Task: {}, TTA Acc = {:.2f}%'.format(args.task_str, acc_t_te)
     else:
-        acc_t_te, y_pred = TTIME(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
+        acc_t_te, (y_pred, predict, y_true) = TTIME(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
         log_str = 'Task: {}, TTA AUC = {:.2f}%'.format(args.task_str, acc_t_te)
     args.log.record(log_str)
     print(log_str)
@@ -308,13 +322,31 @@ def train_target(args):
         print('Test AUC = {:.2f}%'.format(acc_t_te))
 
     torch.save(base_network.state_dict(), './runs/' + str(args.data_name) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(
-        args.SEED) + extra_string + '_adapted' + '.ckpt')
+        args.SEED) + extra_string + '_adapted_m'+ str(args.momentum_param) + '.ckpt')
 
     # save the predictions for ensemble
-    with open('./logs/' + str(args.data_name) + '_' + str(args.method) + '_seed_' + str(args.SEED) +"_pred.csv", 'a') as f:
-        writer = csv.writer(f)
-        writer.writerow(y_pred)
-
+    file_path = os.path.join(str(args.result_dir), str(args.data_name) + '_' + str(args.method) + '_seed_' + str(args.SEED) + "_pred.csv")
+    # Check if the file exists
+    if os.path.exists(file_path):
+        df_existing = pd.read_csv(file_path)
+    else:
+        df_existing = pd.DataFrame()
+    # Convert torch.tensor to np.array and reshape
+    predict = predict.numpy().reshape(-1, 1)  # Convert torch.tensor to np.array and reshape
+    y_true = np.array(y_true).reshape(-1, 1)  # Convert list to np.array and reshape
+    # Combine y_pred, predict, and y_true into a single array
+    combined_data = np.hstack((y_pred, predict, y_true))
+    # Generate column names
+    class_columns = [f'Subject_{args.idt}_Class_{i}' for i in range(args.class_num)]
+    additional_columns = [f'Subject_{args.idt}_predict', f'Subject_{args.idt}_true']
+    header = class_columns + additional_columns
+    # Create a new DataFrame with the combined data and the header
+    df_new = pd.DataFrame(combined_data, columns=header)
+    # Combine existing data with new columns
+    df_combined = pd.concat([df_existing, df_new], axis=1)
+    # Save the combined DataFrame to CSV
+    df_combined.to_csv(file_path, index=False)
+    
     gc.collect()
     if args.data_env != 'local':
         torch.cuda.empty_cache()
@@ -333,6 +365,10 @@ if __name__ == '__main__':
     parser.add_argument('--log_path', type=str, default='./logs/', help='the path to save the logs')
     parser.add_argument('--gpu_idx', type=int, default=0, help='index of GPU')
     parser.add_argument('--use_pretrained_model', type=str2bool, default=False, help='whether to use the pretrained model parameters')
+    parser.add_argument('--finetune', type=str2bool, default=False, help='whether to finetune the model with part of the target data')
+    parser.add_argument('--ft_volume', type=int, default=7*40, help='the amount of data for finetuning in target domain')
+    parser.add_argument('--momentum', type=str2bool, default=False, help='whether to use the momentum updating for model parameters')
+    parser.add_argument('--momentum_param', type=float, default=0.5, help='the value for momentum updating')
 
     args = parser.parse_args()
 
@@ -342,7 +378,11 @@ if __name__ == '__main__':
     data_path_MI = args.data_path_MI
     log_path = args.log_path
     gpu_idx = args.gpu_idx
-    use_pretrained_model = args.use_pretrained_model    
+    use_pretrained_model = args.use_pretrained_model
+    finetune = args.finetune
+    ft_volume = args.ft_volume
+    momentum = args.momentum
+    momentum_param = args.momentum_param
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -401,14 +441,18 @@ if __name__ == '__main__':
         calc_time = False
 
         # whether to use finetuning methods for some of the MI tasks and set how much data for finetuning
-        finetune = False
-        ft_volume = 7 * 40
+        if finetune:
+            print('finetune: {}, ft_volume: {}'.format(finetune, ft_volume))
+
+        # whether to use momentum updating method
+        if momentum:
+            print('momentum: {}, momentum_param: {}'.format(momentum, momentum_param))
 
         args = argparse.Namespace(feature_deep_dim=feature_deep_dim, align=align, lr=lr, t=t, max_epoch=max_epoch,
                                   trial_num=trial_num, time_sample_num=time_sample_num, sample_rate=sample_rate,
                                   N=N, chn=chn, class_num=class_num, stride=stride, steps=steps, calc_time=calc_time,
                                   paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced,
-                                  data_path_MI = data_path_MI,finetune=finetune,ft_volume=ft_volume,)
+                                  data_path_MI = data_path_MI,finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param)
 
         args.method = 'T-TIME'
         args.backbone = 'EEGNet'

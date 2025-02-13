@@ -219,65 +219,168 @@ def train_target(args):
 
     if args.max_epoch == 0:
         if args.align:
+            if not args.finetune:
+                _sub = '_S'
+            else:
+                _sub = '_S_ft'
+            
             if args.data_env != 'local':
                 base_network.load_state_dict(torch.load('./runs/' + str(args.data_name) + '/' + str(args.backbone) +
-                    '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt'))
+                    _sub + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt'))
             else:
                 base_network.load_state_dict(torch.load('./runs/' + str(args.data_name) + '/' + str(args.backbone) +
-                    '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt', map_location=torch.device('cpu')))
+                    _sub + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt', map_location=torch.device('cpu')))
     else:
-        criterion = nn.CrossEntropyLoss()
-        optimizer_f = optim.Adam(netF.parameters(), lr=args.lr)
-        optimizer_c = optim.Adam(netC.parameters(), lr=args.lr)
+        if not args.finetune:
+            # only train on the source domain
+            criterion = nn.CrossEntropyLoss()
+            optimizer_f = optim.Adam(netF.parameters(), lr=args.lr)
+            optimizer_c = optim.Adam(netC.parameters(), lr=args.lr)
 
-        max_iter = args.max_epoch * len(dset_loaders["source"])
-        interval_iter = max_iter // args.max_epoch
-        args.max_iter = max_iter
-        iter_num = 0
-        base_network.train()
+            max_iter = args.max_epoch * len(dset_loaders["source"])
+            interval_iter = max_iter // args.max_epoch
+            args.max_iter = max_iter
+            iter_num = 0
+            base_network.train()
 
-        while iter_num < max_iter:
-            try:
-                inputs_source, labels_source = next(iter_source)
-            except:
-                iter_source = iter(dset_loaders["source"])
-                inputs_source, labels_source = next(iter_source)
+            while iter_num < max_iter:
+                try:
+                    inputs_source, labels_source = next(iter_source)
+                except:
+                    iter_source = iter(dset_loaders["source"])
+                    inputs_source, labels_source = next(iter_source)
 
-            if inputs_source.size(0) == 1:
-                continue
+                if inputs_source.size(0) == 1:
+                    continue
 
-            iter_num += 1
+                iter_num += 1
 
-            features_source, outputs_source = base_network(inputs_source)
+                features_source, outputs_source = base_network(inputs_source)
 
-            classifier_loss = criterion(outputs_source, labels_source)
+                classifier_loss = criterion(outputs_source, labels_source)
 
-            optimizer_f.zero_grad()
-            optimizer_c.zero_grad()
-            classifier_loss.backward()
-            optimizer_f.step()
-            optimizer_c.step()
+                optimizer_f.zero_grad()
+                optimizer_c.zero_grad()
+                classifier_loss.backward()
+                optimizer_f.step()
+                optimizer_c.step()
 
-            if iter_num % interval_iter == 0 or iter_num == max_iter:
-                base_network.eval()
-                # "Target" data have been aligned by EA
-                if args.balanced:
-                    acc_t_te, _ = cal_acc_comb(dset_loaders["Target"], base_network, args=args)
-                    log_str = 'Task: {}, Iter:{}/{}; Offline-EA Acc = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
-                else:
-                    acc_t_te, _ = cal_auc_comb(dset_loaders["Target-Imbalanced"], base_network, args=args)
-                    log_str = 'Task: {}, Iter:{}/{}; Offline-EA AUC = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
-                args.log.record(log_str)
-                print(log_str)
+                if iter_num % interval_iter == 0 or iter_num == max_iter:
+                    base_network.eval()
+                    # "Target" data have been aligned by EA
+                    if args.balanced:
+                        acc_t_te, _ = cal_acc_comb(dset_loaders["Target"], base_network, args=args)
+                        log_str = 'Task: {}, Iter:{}/{}; Offline-EA Acc = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
+                    else:
+                        acc_t_te, _ = cal_auc_comb(dset_loaders["Target-Imbalanced"], base_network, args=args)
+                        log_str = 'Task: {}, Iter:{}/{}; Offline-EA AUC = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
+                    args.log.record(log_str)
+                    print(log_str)
 
-                base_network.train()
+                    base_network.train()
 
-        print('saving model...')
-        makedir_if_not_exist(os.path.join('./runs/', str(args.data_name)))
-        torch.save(base_network.state_dict(),
-                   './runs/' + str(args.data_name) + '/' + str(args.backbone) + '_S' + str(
-                       args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt')
+            print('saving model...')
+            makedir_if_not_exist(os.path.join('./runs/', str(args.data_name)))
+            torch.save(base_network.state_dict(),
+                    './runs/' + str(args.data_name) + '/' + str(args.backbone) + '_S' + str(
+                        args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt')
+        else:
+            # train on the source domain and than fanetune on the part of the subject's data
+            criterion = nn.CrossEntropyLoss()
+            optimizer_f = optim.Adam(netF.parameters(), lr=args.lr)
+            optimizer_c = optim.Adam(netC.parameters(), lr=args.lr)
 
+            # first train on the source domain data
+            max_iter = args.max_epoch * len(dset_loaders["source"])
+            interval_iter = max_iter // args.max_epoch
+            args.max_iter = max_iter
+            iter_num = 0
+            base_network.train()
+
+            while iter_num < max_iter:
+                try:
+                    inputs_source, labels_source = next(iter_source)
+                except:
+                    iter_source = iter(dset_loaders["source"])
+                    inputs_source, labels_source = next(iter_source)
+
+                if inputs_source.size(0) == 1:
+                    continue
+
+                iter_num += 1
+
+                features_source, outputs_source = base_network(inputs_source)
+
+                classifier_loss = criterion(outputs_source, labels_source)
+
+                optimizer_f.zero_grad()
+                optimizer_c.zero_grad()
+                classifier_loss.backward()
+                optimizer_f.step()
+                optimizer_c.step()
+
+                if iter_num % interval_iter == 0 or iter_num == max_iter:
+                    base_network.eval()
+                    # "Target-Online" data have not been aligned by EA
+                    if args.balanced:
+                        acc_t_te, _ = cal_acc_comb(dset_loaders["Target-Online"], base_network, args=args)
+                        log_str = 'Task: {}, Iter:{}/{}; Offline Acc = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
+                    else:
+                        acc_t_te, _ = cal_auc_comb(dset_loaders["Target-Imbalanced"], base_network, args=args)
+                        log_str = 'Task: {}, Iter:{}/{}; Offline AUC = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
+                    args.log.record(log_str)
+                    print(log_str)
+
+                    base_network.train()
+
+            # then finetune on the obtained target data
+            max_iter = args.max_epoch * len(dset_loaders["Target-Ft"])
+            interval_iter = max_iter // args.max_epoch
+            args.max_iter = max_iter
+            iter_num = 0
+            
+            while iter_num < max_iter:
+                try:
+                    inputs_target_ft, labels_target_ft = next(iter_target_ft)
+                except:
+                    iter_target_ft = iter(dset_loaders["Target-Ft"])
+                    inputs_target_ft, labels_target_ft = next(iter_target_ft)
+
+                if inputs_target_ft.size(0) == 1:
+                    continue
+
+                iter_num += 1
+
+                features_target_ft, outputs_target_ft = base_network(inputs_target_ft)
+
+                classifier_loss = criterion(outputs_target_ft, labels_target_ft)
+
+                optimizer_f.zero_grad()
+                optimizer_c.zero_grad()
+                classifier_loss.backward()
+                optimizer_f.step()
+                optimizer_c.step()
+
+                if iter_num % interval_iter == 0 or iter_num == max_iter:
+                    base_network.eval()
+                    # "Target-Online" data have not been aligned by EA
+                    if args.balanced:
+                        acc_t_te, _ = cal_acc_comb(dset_loaders["Target-Online"], base_network, args=args)
+                        log_str = 'Task: {}, Iter:{}/{}; Offline Acc = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
+                    else:
+                        acc_t_te, _ = cal_auc_comb(dset_loaders["Target-Imbalanced"], base_network, args=args)
+                        log_str = 'Task: {}, Iter:{}/{}; Offline-EA AUC = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
+                    args.log.record(log_str)
+                    print(log_str)
+
+                    base_network.train()
+
+            print('saving model...')
+            makedir_if_not_exist(os.path.join('./runs/', str(args.data_name)))
+            torch.save(base_network.state_dict(),
+                    './runs/' + str(args.data_name) + '/' + str(args.backbone) + '_S_ft' + str(
+                        args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt')
+            
 
     base_network.eval()
     # "Target-Online" data haven't been aligned by EA
@@ -331,7 +434,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_path', type=str, default='./data/', help='the path to save the data from mobba dataset')
     parser.add_argument('--data_path_MI', type=str, default='/home/jyt/workspace/transfer_models/datasets_MI/hand_elbow/derivatives', help='the path to save the data from other datasets')
     parser.add_argument('--log_path', type=str, default='./logs/', help='the path to save the logs')
-    parser.add_argument('--gpu_idx', type=int, default=0, help='index of GPU')
+    parser.add_argument('--gpu_idx', type=int, default=1, help='index of GPU')
     parser.add_argument('--use_pretrained_model', type=str2bool, default=False, help='whether to use the pretrained model parameters')
 
     args = parser.parse_args()
@@ -351,7 +454,7 @@ if __name__ == '__main__':
     print('log_path: {}, type: {}'.format(log_path, type(log_path)))
     print('gpu_idx: {}, type: {}'.format(gpu_idx, type(gpu_idx)))
 
-    data_name_list = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4', 'MI-hand_elbow','MI-elbow_rest', 'MI-hand_rest']
+    data_name_list = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4', 'MI-hand_elbow']
 
     dct = pd.DataFrame(columns=['dataset', 'avg', 'std', 's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13'])
 
@@ -362,8 +465,6 @@ if __name__ == '__main__':
         if data_name == 'BNCI2015001': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 12, 13, 2, 2561, 512, 200, 640
         if data_name == 'BNCI2014001-4': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 4, 1001, 250, 288, 248
         if data_name == 'MI-hand_elbow': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
-        if data_name == 'MI-elbow_rest': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
-        if data_name == 'MI-hand_rest': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
 
         # whether to use pretrained model
         # if source models have not been trained, set use_pretrained_model to False to train them
@@ -401,7 +502,7 @@ if __name__ == '__main__':
         calc_time = False
 
         # whether to use finetuning methods for some of the MI tasks and set how much data for finetuning
-        finetune = False
+        finetune = True
         ft_volume = 7 * 40
 
         args = argparse.Namespace(feature_deep_dim=feature_deep_dim, align=align, lr=lr, t=t, max_epoch=max_epoch,

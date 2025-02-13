@@ -508,17 +508,50 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
         data_tar_online = Data.TensorDataset(Xt_aligned, Yt)
         dset_loaders["Target-Online-Prealigned"] = Data.DataLoader(data_tar_online, batch_size=32, shuffle=False, drop_last=False)
 
+    # for the online test, for some MI tasks, using some of the target subject's data for finetuning 
     Xt_copy = tr.from_numpy(Xt_copy).to(tr.float32)
-    Xt_copy = Xt_copy.unsqueeze_(3)
-    if 'EEGNet' in args.backbone or 'Conformer' in args.backbone:
-        Xt_copy = Xt_copy.permute(0, 3, 1, 2)
-    if args.data_env != 'local':
-        Xt_copy = Xt_copy.cuda()
-    data_tar_online = Data.TensorDataset(Xt_copy, Yt)
+    if not args.finetune:
+        # use all data for target test
+        Xt_copy = Xt_copy.unsqueeze_(3)
+        if 'EEGNet' in args.backbone or 'Conformer' in args.backbone:
+            Xt_copy = Xt_copy.permute(0, 3, 1, 2)
+        if args.data_env != 'local':
+            Xt_copy = Xt_copy.cuda()
 
-    # for online TL test, the test data arrived sequentially one-by-one in the online setting
-    # data "Target-Online" haven't been incrementally aligned nor offline EA aligned
-    dset_loaders["Target-Online"] = Data.DataLoader(data_tar_online, batch_size=1, shuffle=False, drop_last=False)
+        data_tar_online = Data.TensorDataset(Xt_copy, Yt)
+        # for online TL test, the test data arrived sequentially one-by-one in the online setting
+        # data "Target-Online" haven't been incrementally aligned nor offline EA aligned
+        dset_loaders["Target-Online"] = Data.DataLoader(data_tar_online, batch_size=1, shuffle=False, drop_last=False)
+    else:
+        # use part of the data for finetuning
+        # take care of the balance of classes
+        _vol = int(args.ft_volume)
+        Xt_ft = Xt_copy[:_vol,:,:]
+        Yt_ft = Yt[:_vol]
+        Xt_test = Xt_copy[_vol:,:,:]
+        Yt_test = Yt[_vol:]
+        
+        # using EA for the finetune data
+        Xt_ft = Xt_ft.numpy()
+        if args.align:
+            Xt_ft = data_alignment(Xt_ft, 1, args)  
+        Xt_ft = tr.from_numpy(Xt_ft).to(tr.float32)
+
+        Xt_ft = Xt_ft.unsqueeze_(3)
+        Xt_test = Xt_test.unsqueeze_(3)
+        if 'EEGNet' in args.backbone or 'Conformer' in args.backbone:
+            Xt_ft = Xt_ft.permute(0, 3, 1, 2)
+            Xt_test = Xt_test.permute(0, 3, 1, 2)
+        if args.data_env != 'local':
+            Xt_ft = Xt_ft.cuda()
+            Xt_test = Xt_test.cuda()
+               
+        data_tar_ft = Data.TensorDataset(Xt_ft, Yt_ft)
+        data_tar_online = Data.TensorDataset(Xt_test, Yt_test)
+        # for online TL test, the test data arrived sequentially one-by-one in the online setting
+        # data "Target-Online" haven't been incrementally aligned nor offline EA aligned
+        dset_loaders["Target-Ft"] = Data.DataLoader(data_tar_ft, batch_size=train_bs, shuffle=True, drop_last=False)
+        dset_loaders["Target-Online"] = Data.DataLoader(data_tar_online, batch_size=1, shuffle=False, drop_last=False)
 
     # for online imbalanced dataset
     # only implemented for binary (class_num=2) for now

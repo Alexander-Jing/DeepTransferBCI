@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
 import csv
+import copy
 
 from tl.utils.utils import str2bool
 from utils.network import backbone_net
@@ -125,6 +126,11 @@ def TTIME(loader, model, args, balanced=True):
             else:
                 batch_test = torch.from_numpy(batch_test).to(torch.float32)
 
+            if args.momentum:
+                # copy the parameters of the model
+                model_k = copy.deepcopy(model)
+
+            # update target model
             start_time = time.time()
             for step in range(args.steps):
 
@@ -154,6 +160,14 @@ def TTIME(loader, model, args, balanced=True):
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+
+            if args.momentum:
+                # Momentum update for the model parameters
+                with torch.no_grad():
+                    for param_q, param_k in zip(model.parameters(), model_k.parameters()):
+                        param_k.data = param_k.data * args.momentum_param + param_q.data * (1. - args.momentum_param)
+                # Update the model
+                model = copy.deepcopy(model_k)
 
             TTA_time = time.time()
             if args.calc_time:
@@ -308,7 +322,7 @@ def train_target(args):
         print('Test AUC = {:.2f}%'.format(acc_t_te))
 
     torch.save(base_network.state_dict(), './runs/' + str(args.data_name) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(
-        args.SEED) + extra_string + '_adapted' + '.ckpt')
+        args.SEED) + extra_string + '_adapted_m' + '.ckpt')
 
     # save the predictions for ensemble
     with open('./logs/' + str(args.data_name) + '_' + str(args.method) + '_seed_' + str(args.SEED) +"_pred.csv", 'a') as f:
@@ -404,11 +418,15 @@ if __name__ == '__main__':
         finetune = False
         ft_volume = 7 * 40
 
+        # whether to use momentum updating method
+        momentum = True
+        momentum_param = 0.5  # momentum parameter
+
         args = argparse.Namespace(feature_deep_dim=feature_deep_dim, align=align, lr=lr, t=t, max_epoch=max_epoch,
                                   trial_num=trial_num, time_sample_num=time_sample_num, sample_rate=sample_rate,
                                   N=N, chn=chn, class_num=class_num, stride=stride, steps=steps, calc_time=calc_time,
                                   paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced,
-                                  data_path_MI = data_path_MI,finetune=finetune,ft_volume=ft_volume,)
+                                  data_path_MI = data_path_MI,finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param)
 
         args.method = 'T-TIME'
         args.backbone = 'EEGNet'

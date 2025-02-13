@@ -97,6 +97,66 @@
             "cwd": "${workspaceFolder}"
         },
         {
+            "name": "Python: TTIME-elbow-rest",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tl/ttime_debug.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "MI-elbow_rest",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--data_path_MI", "/home/jyt/workspace/transfer_models/datasets_MI/hand_elbow/derivatives",
+                "--log_path", "./logs/ttime-debug-elbow_rest-1/",
+                "--use_pretrained_model", "False",
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: TTIME-hand-rest",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tl/ttime_debug.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "MI-hand_rest",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--data_path_MI", "/home/jyt/workspace/transfer_models/datasets_MI/hand_elbow/derivatives",
+                "--log_path", "./logs/ttime-debug-hand_rest/",
+                "--use_pretrained_model", "False",
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: TTIME-hand-elbow-ft",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tl/ttime_debug_2.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "MI-hand_elbow",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--data_path_MI", "/home/jyt/workspace/transfer_models/datasets_MI/hand_elbow/derivatives",
+                "--log_path", "./logs/ttime-debug-2/",
+                "--use_pretrained_model", "False",
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
             "name": "Python: TTIME-hand-elbow-conformer",  // choose the method you want to run
             "type": "python",
             "request": "launch",
@@ -115,6 +175,72 @@
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
             },
             "cwd": "${workspaceFolder}"
-        }
+        },
+        {
+            "name": "Python: TTIME-elbow-rest-momentum",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tl/ttime_debug_m.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "MI-elbow_rest",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--data_path_MI", "/home/jyt/workspace/transfer_models/datasets_MI/hand_elbow/derivatives",
+                "--log_path", "./logs/ttime-debug-elbow_rest-momentum/",
+                "--use_pretrained_model", "True",
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: TTIME-elbow-rest-momentum-cls",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tl/ttime_debug_m_cls.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "MI-elbow_rest",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--data_path_MI", "/home/jyt/workspace/transfer_models/datasets_MI/hand_elbow/derivatives",
+                "--log_path", "./logs/ttime-debug-elbow_rest-momentum-cls/",
+                "--use_pretrained_model", "True",
+                "--finetune", "False",
+                "--momentum", "True",
+                "--momentum_param", "0.5",
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: TTIME-hand-rest-momentum-cls",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tl/ttime_debug_m_cls.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "MI-hand_rest",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--data_path_MI", "/home/jyt/workspace/transfer_models/datasets_MI/hand_elbow/derivatives",
+                "--log_path", "./logs/ttime-debug-hand_rest-momentum-cls/",
+                "--use_pretrained_model", "True",
+                "--finetune", "False",
+                "--momentum", "True",
+                "--momentum_param", "0.5",
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
     ]
 }
