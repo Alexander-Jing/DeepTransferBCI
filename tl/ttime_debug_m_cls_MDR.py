@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
 import csv
+import copy
 
 from tl.utils.utils import str2bool
 from utils.network import backbone_net
@@ -22,15 +23,17 @@ import gc
 import sys
 import time
 
-# This is the implementation of model BN-adapt from paper: 
-# Schneider S, Rusak E, Eck L, et al. Improving robustness against common corruptions by covariate shift adaptation
-# [J].Advances in neural information processing systems, 2020, 33: 11539-11551.
+# This is the implementation of T-TIME from paper
+# Li S, Wang Z, Luo H, et al. T-TIME: Test-time information maximization ensemble for plug-and-play BCIs[J]. IEEE Transactions on Biomedical Engineering, 2023.
 # @Time    : 2023/07/07
 # @Author  : Siyang Li
-# @File    : bn-adapt.py
+# @File    : ttime.py
 # from github https://github.com/sylyoung/DeepTransferEEG/tree/main
 
-def BN_adapt(loader, model, args, balanced=True):
+def TTIME(loader, model, args, balanced=True):
+    # "T-TIME: Test-Time Information Maximization Ensemble for Plug-and-Play BCIs"
+    # IEEE Transactions on Biomedical Engineering
+    # Note that the ensemble experiment is separately implemented in ttime_ensemble.py, using recorded test prediction.
 
     if balanced == False and args.data_name == 'BNCI2014001-4':
         print('ERROR, imbalanced multi-class not implemented')
@@ -39,9 +42,15 @@ def BN_adapt(loader, model, args, balanced=True):
     y_true = []
     y_pred = []
 
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+
     # initialize test reference matrix for Incremental EA
     if args.align:
         R = 0
+
+    if not balanced:
+        zk_arrs = np.zeros(2)
+        c = 4
 
     iter_test = iter(loader)
 
@@ -67,7 +76,7 @@ def BN_adapt(loader, model, args, balanced=True):
             if i == 0:
                 sample_test = data_cum.reshape(args.chn, args.time_sample_num)
             else:
-                sample_test = data_cum[i].reshape(args.chn, args.time_sample_num)
+                sample_test = data_cum[i].reshape(args.chn, args.time_sample_num)  # get the ith sample for IEA and evaluation
             # update reference matrix
             R = EA_online(sample_test, R, i)
 
@@ -117,23 +126,78 @@ def BN_adapt(loader, model, args, balanced=True):
             else:
                 batch_test = torch.from_numpy(batch_test).to(torch.float32)
 
+            if args.momentum:
+                # copy the parameters of the model
+                model_k = copy.deepcopy(model)
+
+            # update target model
             start_time = time.time()
             for step in range(args.steps):
 
-                model[0].block1[2].train()
-                model[0].block1[4].train()
-                model[0].block2[3].train()
-
-                # forward pass for model BN update
                 _, outputs = model(batch_test)
+                outputs = outputs.float().cpu()
 
-                model[0].block1[2].eval()
-                model[0].block1[4].eval()
-                model[0].block2[3].eval()
+                args.epsilon = 1e-5
+                softmax_out = nn.Softmax(dim=1)(outputs / args.t)
+                # Conditional Entropy Minimization loss
+                CEM_loss = torch.mean(Entropy(softmax_out))
+                msoftmax = softmax_out.mean(dim=0)
+
+                if balanced:
+                    # Marginal Distribution Regularization loss
+                    MDR_loss = torch.sum(msoftmax * torch.log(msoftmax + args.epsilon))
+                    loss = CEM_loss + args.v_MDR * MDR_loss  # use the weight for MDR, as the author of TTime also claimed that MDR may not be suitable for small batches 
+                else:
+                    # Adaptive Marginal Distribution Regularization
+                    qk = torch.zeros((args.class_num, )).to(torch.float32)
+                    for k in range(args.class_num):
+                        qk[k] = msoftmax[k] / (c + zk_arrs[k])
+                    sum_qk = torch.sum(qk)
+                    normed_qk = qk / sum_qk
+                    AMDR_loss = torch.sum(normed_qk * torch.log(normed_qk + args.epsilon))
+                    loss = CEM_loss + AMDR_loss
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+            if args.momentum:
+                # Momentum update for the model parameters
+                with torch.no_grad():
+                    for param_q, param_k in zip(model.parameters(), model_k.parameters()):
+                        param_k.data = param_k.data * args.momentum_param + param_q.data * (1. - args.momentum_param)
+                # Update the model
+                model = copy.deepcopy(model_k)
 
             TTA_time = time.time()
             if args.calc_time:
                 print('sample ', str(i), ', post-inference model update finished in ms:', np.round((TTA_time - start_time) * 1000, 3))
+
+            if not balanced:
+                if i + 1 == args.test_batch:
+                    args.pred_thresh = 0.7
+                    pl = torch.max(softmax_out, 1)[1]
+                    for l in range(args.test_batch):
+                        if pl[l] == 0:
+                            if softmax_out[l][0] > args.pred_thresh:
+                                zk_arrs[0] += 1
+                        elif pl[l] == 1:
+                            if softmax_out[l][1] > args.pred_thresh:
+                                zk_arrs[1] += 1
+                        else:
+                            print('ERROR in pseudo labeling!')
+                            sys.exit(0)
+                else:
+                    # update confident prediction ids for current test sample
+                    pl = torch.max(softmax_out, 1)[1]
+                    if pl[-1] == 0:
+                        if softmax_out[-1][0] > args.pred_thresh:
+                            zk_arrs[0] += 1
+                    elif pl[-1] == 1:
+                        if softmax_out[-1][1] > args.pred_thresh:
+                            zk_arrs[1] += 1
+                    else:
+                        print('ERROR in pseudo labeling!')
 
         model.eval()
 
@@ -161,9 +225,7 @@ def train_target(args):
     X_src, y_src, X_tar, y_tar = read_mi_combine_tar(args)
     print('X_src, y_src, X_tar, y_tar:', X_src.shape, y_src.shape, X_tar.shape, y_tar.shape)
     dset_loaders = data_loader(X_src, y_src, X_tar, y_tar, args)
-    
-    args.sample_rate = 6  # to set EEGNet kernal as 3, should be modified 
-    
+    args.sample_rate = 6  # to set EEGNet kernal as 3
     netF, netC = backbone_net(args, return_type='xy')
     if args.data_env != 'local':
         netF, netC = netF.cuda(), netC.cuda()
@@ -212,7 +274,7 @@ def train_target(args):
 
             if iter_num % interval_iter == 0 or iter_num == max_iter:
                 base_network.eval()
-
+                # "Target" data have been aligned by EA
                 if args.balanced:
                     acc_t_te, _ = cal_acc_comb(dset_loaders["Target"], base_network, args=args)
                     log_str = 'Task: {}, Iter:{}/{}; Offline-EA Acc = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
@@ -232,7 +294,8 @@ def train_target(args):
 
 
     base_network.eval()
-
+    # "Target-Online" data haven't been aligned by EA
+    # cal_score_online function used incremental EA for the "Target-Online" data to test the model
     score = cal_score_online(dset_loaders["Target-Online"], base_network, args=args)
     if args.balanced:
         log_str = 'Task: {}, Online IEA Acc = {:.2f}%'.format(args.task_str, score)
@@ -244,10 +307,10 @@ def train_target(args):
     print('executing TTA...')
 
     if args.balanced:
-        acc_t_te, (y_pred, predict, y_true) = BN_adapt(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
+        acc_t_te, (y_pred, predict, y_true) = TTIME(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
         log_str = 'Task: {}, TTA Acc = {:.2f}%'.format(args.task_str, acc_t_te)
     else:
-        acc_t_te, (y_pred, predict, y_true) = BN_adapt(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
+        acc_t_te, (y_pred, predict, y_true) = TTIME(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
         log_str = 'Task: {}, TTA AUC = {:.2f}%'.format(args.task_str, acc_t_te)
     args.log.record(log_str)
     print(log_str)
@@ -259,7 +322,7 @@ def train_target(args):
         print('Test AUC = {:.2f}%'.format(acc_t_te))
 
     torch.save(base_network.state_dict(), './runs/' + str(args.data_name) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(
-        args.SEED) + extra_string + '_adapted' + '.ckpt')
+        args.SEED) + extra_string + '_adapted_m'+ str(args.momentum_param) + '.ckpt')
 
     # save the predictions for ensemble
     file_path = os.path.join(str(args.result_dir), str(args.data_name) + '_' + str(args.method) + '_seed_' + str(args.SEED) + "_pred.csv")
@@ -283,7 +346,7 @@ def train_target(args):
     df_combined = pd.concat([df_existing, df_new], axis=1)
     # Save the combined DataFrame to CSV
     df_combined.to_csv(file_path, index=False)
-
+    
     gc.collect()
     if args.data_env != 'local':
         torch.cuda.empty_cache()
@@ -306,6 +369,8 @@ if __name__ == '__main__':
     parser.add_argument('--ft_volume', type=int, default=7*40, help='the amount of data for finetuning in target domain')
     parser.add_argument('--momentum', type=str2bool, default=False, help='whether to use the momentum updating for model parameters')
     parser.add_argument('--momentum_param', type=float, default=0.5, help='the value for momentum updating')
+    parser.add_argument('--v_MDR', type=float, default=1.0, help='the weight for MDR')
+
 
     args = parser.parse_args()
 
@@ -320,6 +385,7 @@ if __name__ == '__main__':
     ft_volume = args.ft_volume
     momentum = args.momentum
     momentum_param = args.momentum_param
+    v_MDR = args.v_MDR
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -327,7 +393,9 @@ if __name__ == '__main__':
     print('data_path: {}, type: {}'.format(data_path, type(data_path)))
     print('log_path: {}, type: {}'.format(log_path, type(log_path)))
     print('gpu_idx: {}, type: {}'.format(gpu_idx, type(gpu_idx)))
-
+    print('use_pretrained_model: {}, type: {}'.format(use_pretrained_model, type(use_pretrained_model)))
+    print('v_MDR: {}, type: {}'.format(v_MDR, type(v_MDR)))
+    
     data_name_list = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4', 'MI-hand_elbow','MI-elbow_rest', 'MI-hand_rest']
 
     dct = pd.DataFrame(columns=['dataset', 'avg', 'std', 's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13'])
@@ -345,6 +413,7 @@ if __name__ == '__main__':
         # whether to use pretrained model
         # if source models have not been trained, set use_pretrained_model to False to train them
         # alternatively, run dnn.py to train source models, in seperating the steps
+        # use_pretrained_model = True
         if use_pretrained_model:
             # no training
             max_epoch = 0
@@ -388,9 +457,10 @@ if __name__ == '__main__':
                                   trial_num=trial_num, time_sample_num=time_sample_num, sample_rate=sample_rate,
                                   N=N, chn=chn, class_num=class_num, stride=stride, steps=steps, calc_time=calc_time,
                                   paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced,
-                                  data_path_MI = data_path_MI,finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param)
+                                  data_path_MI = data_path_MI,finetune=finetune,ft_volume=ft_volume,momentum=momentum,
+                                  momentum_param=momentum_param, v_MDR=v_MDR)
 
-        args.method = 'BN-adapt'
+        args.method = 'T-TIME'
         args.backbone = 'EEGNet'
 
         # train batch size

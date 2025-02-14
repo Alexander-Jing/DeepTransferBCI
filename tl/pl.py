@@ -11,7 +11,7 @@ from tl.utils.utils import str2bool
 from utils.network import backbone_net
 from utils.LogRecord import LogRecord
 from utils.dataloader import read_mi_combine_tar
-from utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online
+from utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist
 from utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
 from utils.loss import Entropy
@@ -129,19 +129,21 @@ def PL(loader, model, args, balanced=True):
         if args.data_name == 'BNCI2014001-4':
             y_pred = np.array(y_pred).reshape(-1, )  # multiclass
         else:
-            y_pred = np.array(y_pred).reshape(-1, args.class_num)[:, 1]  # binary
+            y_pred = np.array(y_pred).reshape(-1, args.class_num)  # binary
     else:
         predict = torch.from_numpy(np.array(y_pred)).to(torch.float32).reshape(-1, args.class_num)
-        y_pred = np.array(predict).reshape(-1, args.class_num)[:, 1]  # binary
+        y_pred = np.array(predict).reshape(-1, args.class_num)  # binary
         score = roc_auc_score(y_true, y_pred)
 
-    return score * 100, y_pred
+    return score * 100, (y_pred, predict, y_true)
 
 
 def train_target(args):
     X_src, y_src, X_tar, y_tar = read_mi_combine_tar(args)
     print('X_src, y_src, X_tar, y_tar:', X_src.shape, y_src.shape, X_tar.shape, y_tar.shape)
     dset_loaders = data_loader(X_src, y_src, X_tar, y_tar, args)
+
+    args.sample_rate = 6  # to set EEGNet kernal as 3, should be modified 
 
     netF, netC = backbone_net(args, return_type='xy')
     if args.data_env != 'local':
@@ -213,6 +215,7 @@ def train_target(args):
                 base_network.train()
 
         print('saving model...')
+        makedir_if_not_exist(os.path.join('./runs/', str(args.data_name)))
         if args.align:
             torch.save(base_network.state_dict(),
                        './runs/' + str(args.data_name) + '/' + str(args.backbone) + '_S' + str(
@@ -235,10 +238,10 @@ def train_target(args):
     print('executing TTA...')
 
     if args.balanced:
-        acc_t_te, y_pred = PL(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
+        acc_t_te, (y_pred, predict, y_true) = PL(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
         log_str = 'Task: {}, TTA Acc = {:.2f}%'.format(args.task_str, acc_t_te)
     else:
-        acc_t_te, y_pred = PL(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
+        acc_t_te, (y_pred, predict, y_true) = PL(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
         log_str = 'Task: {}, TTA AUC = {:.2f}%'.format(args.task_str, acc_t_te)
     args.log.record(log_str)
     print(log_str)
@@ -247,6 +250,29 @@ def train_target(args):
         print('Test Acc = {:.2f}%'.format(acc_t_te))
     else:
         print('Test AUC = {:.2f}%'.format(acc_t_te))
+
+    # save the predictions for ensemble
+    file_path = os.path.join(str(args.result_dir), str(args.data_name) + '_' + str(args.method) + '_seed_' + str(args.SEED) + "_pred.csv")
+    # Check if the file exists
+    if os.path.exists(file_path):
+        df_existing = pd.read_csv(file_path)
+    else:
+        df_existing = pd.DataFrame()
+    # Convert torch.tensor to np.array and reshape
+    predict = predict.numpy().reshape(-1, 1)  # Convert torch.tensor to np.array and reshape
+    y_true = np.array(y_true).reshape(-1, 1)  # Convert list to np.array and reshape
+    # Combine y_pred, predict, and y_true into a single array
+    combined_data = np.hstack((y_pred, predict, y_true))
+    # Generate column names
+    class_columns = [f'Subject_{args.idt}_Class_{i}' for i in range(args.class_num)]
+    additional_columns = [f'Subject_{args.idt}_predict', f'Subject_{args.idt}_true']
+    header = class_columns + additional_columns
+    # Create a new DataFrame with the combined data and the header
+    df_new = pd.DataFrame(combined_data, columns=header)
+    # Combine existing data with new columns
+    df_combined = pd.concat([df_existing, df_new], axis=1)
+    # Save the combined DataFrame to CSV
+    df_combined.to_csv(file_path, index=False)
 
     gc.collect()
     if args.data_env != 'local':
@@ -261,24 +287,38 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_name', type=str, default='BNCI2014001', help='the data set name, now support BNCI2014001, BNCI2014002, BNCI2015001 from moabb')
     parser.add_argument('--data_save', type=str2bool, default=True, help='whether save the data to file')
-    parser.add_argument('--data_path', type=str, default='./data/', help='the path to save the data')
+    parser.add_argument('--data_path', type=str, default='./data/', help='the path to save the data from mobba dataset')
+    parser.add_argument('--data_path_MI', type=str, default='/home/jyt/workspace/transfer_models/datasets_MI/hand_elbow/derivatives', help='the path to save the data from other datasets')
     parser.add_argument('--log_path', type=str, default='./logs/', help='the path to save the logs')
     parser.add_argument('--gpu_idx', type=int, default=0, help='index of GPU')
+    parser.add_argument('--use_pretrained_model', type=str2bool, default=False, help='whether to use the pretrained model parameters')
+    parser.add_argument('--finetune', type=str2bool, default=False, help='whether to finetune the model with part of the target data')
+    parser.add_argument('--ft_volume', type=int, default=7*40, help='the amount of data for finetuning in target domain')
+    parser.add_argument('--momentum', type=str2bool, default=False, help='whether to use the momentum updating for model parameters')
+    parser.add_argument('--momentum_param', type=float, default=0.5, help='the value for momentum updating')
+
     args = parser.parse_args()
 
     data_name = args.dataset_name
     data_save = args.data_save
     data_path = args.data_path
+    data_path_MI = args.data_path_MI
     log_path = args.log_path
     gpu_idx = args.gpu_idx
+    use_pretrained_model = args.use_pretrained_model
+    finetune = args.finetune
+    ft_volume = args.ft_volume
+    momentum = args.momentum
+    momentum_param = args.momentum_param
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
+    print('data_path_MI: {}, type: {}'.format(data_path_MI, type(data_path_MI)))
     print('data_path: {}, type: {}'.format(data_path, type(data_path)))
     print('log_path: {}, type: {}'.format(log_path, type(log_path)))
     print('gpu_idx: {}, type: {}'.format(gpu_idx, type(gpu_idx)))
 
-    data_name_list = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4']
+    data_name_list = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4', 'MI-hand_elbow','MI-elbow_rest', 'MI-hand_rest']
 
     dct = pd.DataFrame(columns=['dataset', 'avg', 'std', 's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13'])
 
@@ -287,11 +327,14 @@ if __name__ == '__main__':
         if data_name == 'BNCI2014001': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 2, 1001, 250, 144, 248
         if data_name == 'BNCI2014002': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 14, 15, 2, 2561, 512, 100, 640
         if data_name == 'BNCI2015001': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 12, 13, 2, 2561, 512, 200, 640
+        if data_name == 'BNCI2014001-4': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 4, 1001, 250, 288, 248
+        if data_name == 'MI-hand_elbow': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
+        if data_name == 'MI-elbow_rest': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
+        if data_name == 'MI-hand_rest': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
 
         # whether to use pretrained model
         # if source models have not been trained, set use_pretrained_model to False to train them
         # alternatively, run dnn.py to train source models, in seperating the steps
-        use_pretrained_model = True
         if use_pretrained_model:
             # no training
             max_epoch = 0
@@ -300,7 +343,7 @@ if __name__ == '__main__':
             max_epoch = 100
 
         # learning rate
-        lr = 0.001
+        lr = 0.0001
 
         # test batch size
         test_batch = 8
@@ -317,11 +360,23 @@ if __name__ == '__main__':
         # whether to test balanced or imbalanced (2:1) target subject
         balanced = True
 
+        # whether to record running time
+        calc_time = False
+
+        # whether to use finetuning methods for some of the MI tasks and set how much data for finetuning
+        if finetune:
+            print('finetune: {}, ft_volume: {}'.format(finetune, ft_volume))
+
+        # whether to use momentum updating method
+        if momentum:
+            print('momentum: {}, momentum_param: {}'.format(momentum, momentum_param))
+
         args = argparse.Namespace(feature_deep_dim=feature_deep_dim, align=align, lr=lr, max_epoch=max_epoch,
                                   trial_num=trial_num, time_sample_num=time_sample_num, sample_rate=sample_rate,
-                                  N=N, chn=chn, class_num=class_num, stride=stride, steps=steps,
-                                  paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced)
-
+                                  N=N, chn=chn, class_num=class_num, stride=stride, steps=steps, calc_time=calc_time,
+                                  paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced,
+                                  data_path_MI = data_path_MI,finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param)
+        
         args.method = 'PL'
         args.backbone = 'EEGNet'
 
@@ -338,7 +393,7 @@ if __name__ == '__main__':
         total_acc = []
 
         # update multiple models, independently, from the source models
-        for s in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]:
+        for s in [1, 2, 3, 4, 5]:
             args.SEED = s
 
             fix_random_seed(args.SEED)
