@@ -4,12 +4,21 @@ import sys
 import numpy as np
 import argparse
 from easydict import EasyDict as edict
-from tl.utils.utils import str2bool
+# from tl.utils.utils import str2bool
 
 import moabb
-from moabb.datasets import BNCI2014001, BNCI2014002, BNCI2015001
+from moabb.datasets import BNCI2014001, BNCI2014002, BNCI2015001, Liu2024
 from moabb.paradigms import MotorImagery, P300
 
+def str2bool(v):
+    if isinstance(v, bool):
+       return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 def dataset_to_file(dataset_name, data_save, data_path='./data/'):
     moabb.set_log_level("ERROR")
@@ -25,6 +34,9 @@ def dataset_to_file(dataset_name, data_save, data_path='./data/'):
         dataset = BNCI2015001()
         paradigm = MotorImagery(n_classes=2)
         # (5600, 13, 2561) (5600,) 512Hz 12subjects * 2 classes * (200 + 200 + (200 for Subj 8/9/10/11)) trials * (2/3)sessions
+    elif dataset_name == "Liu2024":
+        dataset = Liu2024()
+        paradigm = MotorImagery(n_classes=2)
 
     if data_save:
         print('preparing ' + str(dataset_name) + ' data...')
@@ -68,7 +80,7 @@ if __name__ == '__main__':
     print('data_path: {}, type: {}'.format(data_path, type(data_path)))
 
     # load the dataset
-    if dataset_name in ['BNCI2014001', 'BNCI2014002', 'BNCI2015001']:
+    if dataset_name in ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'Liu2024']:
         info = dataset_to_file(dataset_name, data_save=data_save, data_path=data_path)
 
     '''

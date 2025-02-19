@@ -12,7 +12,7 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--dataset_name", "BNCI2014001",
+                "--dataset_name", "Liu2024",
                 "--data_save", "True",
                 "--data_path", "./data/",
             ],
