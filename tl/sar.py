@@ -352,7 +352,7 @@ if __name__ == '__main__':
             max_epoch = 100
 
         # learning rate
-        lr = 0.001
+        lr = 0.0001
 
         # test batch size
         test_batch = 8

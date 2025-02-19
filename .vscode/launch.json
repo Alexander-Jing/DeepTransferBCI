@@ -405,6 +405,29 @@
             "cwd": "${workspaceFolder}"
         },
         {
+            "name": "Python: SAR-elbow-rest-momentum-cls",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tl/sar.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "MI-elbow_rest",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--data_path_MI", "/home/jyt/workspace/transfer_models/datasets_MI/hand_elbow/derivatives",
+                "--log_path", "./logs/sar-debug-elbow_rest-momentum-cls/",
+                "--use_pretrained_model", "True",
+                "--finetune", "False",
+                "--momentum", "False",
+                "--momentum_param", "0.5",
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
             "name": "Python: Evaluation for methods",  // choose the method you want to run
             "type": "python",
             "request": "launch",
