@@ -20,6 +20,7 @@ python3 $program_path \
   --data_path_MI "/home/jyt/workspace/transfer_models/datasets_MI/hand_elbow/derivatives" \
   --log_path "./logs/sar-debug-elbow_rest-momentum-cls/" \
   --use_pretrained_model "True" \
+  --gpu_idx "1" \
   --finetune "False" \
   --momentum "False" \
   --momentum_param "0.5"
