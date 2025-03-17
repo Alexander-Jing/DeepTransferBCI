@@ -7,29 +7,30 @@ import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
 import csv
+
+from tl.utils.utils import str2bool
 from utils.network import backbone_net
 from utils.LogRecord import LogRecord
 from utils.dataloader import read_mi_combine_tar
-from utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, str2bool, makedir_if_not_exist
+from utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist
 from utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
-from utils.loss import Entropy
+from models.tent import configure_model, collect_params, Tent
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 import gc
 import sys
 import time
 
-# This is the implementation of DELTA from paper
-# Zhao B, Chen C, Xia S T. Delta: degradation-free fully test-time adaptation[J]. arXiv preprint arXiv:2301.13018, 2023.
-# @Time    : 2024/2/4
-# @Author  : Siyang Li
-# @File    : delta.py
-# from github https://github.com/sylyoung/DeepTransferEEG/tree/main
+# This is the implementation of Tast from paper
+# Jang M, Chung S Y, Chung H W. Test-time adaptation via self-training with nearest neighbor information[J]. arXiv preprint arXiv:2207.10792, 2022.
+# @Time    : 2025/03/11
+# @Author  : Yitao Jing
+# @File    : tast.py
+# original code from github https://github.com/mingukjang/TAST
 
-def DELTA(loader, model, args, balanced=True):
-    # DELTA
-    # online-TTA version
+def Tent_func(loader, model, args, balanced=True):
+    # Tent
 
     if balanced == False and args.data_name == 'BNCI2014001-4':
         print('ERROR, imbalanced multi-class not implemented')
@@ -38,14 +39,9 @@ def DELTA(loader, model, args, balanced=True):
     y_true = []
     y_pred = []
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-
     # initialize test reference matrix for Incremental EA
     if args.align:
         R = 0
-
-    # for DELTA initiation
-    z = [1 / 2, 1 / 2]
 
     iter_test = iter(loader)
 
@@ -92,7 +88,35 @@ def DELTA(loader, model, args, balanced=True):
         else:
             sample_test = torch.from_numpy(sample_test).to(torch.float32)
 
-        _, outputs = model(sample_test)
+        if (i + 1) >= args.test_batch:
+            if args.stride != 1:
+                print('must have stride 1')
+                sys.exit(1)
+            else:
+                if (i + 1) == args.test_batch:
+                    # Tent mode initialize
+                    model = configure_model(model)
+                    params, param_names = collect_params(model)  # collect the Collect the affine scale + shift parameters from batch norms of the model
+                    optimizer = torch.optim.Adam(params, lr=args.lr)  # set the optimizer for the affine scale + shift parameters
+                    tented_model = Tent(model, optimizer)  # update the model
+
+                if args.align:
+                    batch_test = np.copy(data_cum[i - args.test_batch + 1:i + 1])
+                    # transform test batch
+                    batch_test = np.dot(sqrtRefEA, batch_test)
+                    batch_test = np.transpose(batch_test, (1, 2, 0, 3))
+                else:
+                    batch_test = data_cum[i - args.test_batch + 1:i + 1].numpy()
+                    batch_test = batch_test.reshape(args.test_batch, 1, batch_test.shape[2], batch_test.shape[3])
+
+                if args.data_env != 'local':
+                    batch_test = torch.from_numpy(batch_test).to(torch.float32).cuda()
+                else:
+                    batch_test = torch.from_numpy(batch_test).to(torch.float32)
+
+                outputs = tented_model(batch_test)[-1].reshape(1, -1)
+        else:
+            _, outputs = model(sample_test)
 
         softmax_out = nn.Softmax(dim=1)(outputs)
 
@@ -102,67 +126,6 @@ def DELTA(loader, model, args, balanced=True):
 
         y_pred.append(softmax_out.detach().cpu().numpy())
         y_true.append(labels.item())
-
-        #################### Phase 2: target model update ####################
-        model.train()
-        # sliding batch
-        if (i + 1) >= args.test_batch and (i + 1) % args.stride == 0:
-            if args.align:
-                batch_test = np.copy(data_cum[i - args.test_batch + 1:i + 1])
-                # transform test batch
-                batch_test = np.dot(sqrtRefEA, batch_test)
-                batch_test = np.transpose(batch_test, (1, 2, 0, 3))
-            else:
-                batch_test = data_cum[i - args.test_batch + 1:i + 1].numpy()
-                batch_test = batch_test.reshape(args.test_batch, 1, batch_test.shape[2], batch_test.shape[3])
-
-            if args.data_env != 'local':
-                batch_test = torch.from_numpy(batch_test).to(torch.float32).cuda()
-            else:
-                batch_test = torch.from_numpy(batch_test).to(torch.float32)
-
-            start_time = time.time()
-            for step in range(args.steps):
-
-                features, outputs = model(batch_test)
-                outputs = outputs.float().cpu()
-                args.epsilon = 1e-5
-                softmax_out = nn.Softmax(dim=1)(outputs / args.t)
-                msoftmax = softmax_out.mean(dim=0)
-
-                # CEM
-                CEM_loss = torch.mean(Entropy(softmax_out))
-
-                # DELTA
-                # Dynamic online re-weighting (DOT)
-                pl = torch.max(softmax_out, 1)[1]
-                w = torch.zeros((batch_test.shape[0],))
-                w_bar = torch.zeros((batch_test.shape[0],))
-                for b in range(batch_test.shape[0]):
-                    w[b] = 1 / (z[pl[b]] + args.epsilon)
-                for b in range(batch_test.shape[0]):
-                    w_bar[b] = args.test_batch * w[b] / torch.sum(w)
-                msoftmax_weighted = torch.mm(softmax_out.T.cpu(), torch.tensor(w_bar).to(torch.float32).reshape(batch_test.shape[0], 1)) / batch_test.shape[0]
-
-                args.lambda_z = 0.9  # DELTA-DOT momentum
-
-                if (i + 1) % args.test_batch == 0:
-                    for c in range(len(z)):
-                        z[c] = z[c] * args.lambda_z + msoftmax[c].cpu() * (1 - args.lambda_z)
-
-                gentropy_loss = torch.sum(msoftmax_weighted * torch.log(msoftmax_weighted + args.epsilon))
-
-                delta_loss = CEM_loss + gentropy_loss
-
-                optimizer.zero_grad()
-                delta_loss.backward()
-                optimizer.step()
-
-            TTA_time = time.time()
-            if args.calc_time:
-                print('sample ', str(i), ', post-inference model update finished in ms:', np.round((TTA_time - start_time) * 1000, 3))
-
-        model.eval()
 
     if balanced:
         _, predict = torch.max(torch.from_numpy(np.array(y_pred)).to(torch.float32).reshape(-1, args.class_num), 1)
@@ -174,7 +137,7 @@ def DELTA(loader, model, args, balanced=True):
             y_pred = np.array(y_pred).reshape(-1, args.class_num)  # binary
     else:
         predict = torch.from_numpy(np.array(y_pred)).to(torch.float32).reshape(-1, args.class_num)
-        y_pred = np.array(predict).reshape(-1, args.class_num) # binary
+        y_pred = np.array(predict).reshape(-1, args.class_num)  # binary
         score = roc_auc_score(y_true, y_pred)
     return score * 100, (y_pred, predict, y_true)
 
@@ -256,6 +219,7 @@ def train_target(args):
                    './runs/' + str(args.data_name) + '/' + str(args.backbone) + '_S' + str(
                        args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt')
 
+
     base_network.eval()
 
     score = cal_score_online(dset_loaders["Target-Online"], base_network, args=args)
@@ -269,16 +233,17 @@ def train_target(args):
     print('executing TTA...')
 
     if args.balanced:
-        acc_t_te, (y_pred, predict, y_true) = DELTA(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
+        acc_t_te, (y_pred, predict, y_true) = Tent_func(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
         log_str = 'Task: {}, TTA Acc = {:.2f}%'.format(args.task_str, acc_t_te)
     else:
-        acc_t_te, (y_pred, predict, y_true) = DELTA(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
+        acc_t_te, (y_pred, predict, y_true) = Tent_func(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
         log_str = 'Task: {}, TTA AUC = {:.2f}%'.format(args.task_str, acc_t_te)
     args.log.record(log_str)
     print(log_str)
 
     if args.balanced:
         print('Test Acc = {:.2f}%'.format(acc_t_te))
+
     else:
         print('Test AUC = {:.2f}%'.format(acc_t_te))
 
@@ -307,6 +272,7 @@ def train_target(args):
     df_combined = pd.concat([df_existing, df_new], axis=1)
     # Save the combined DataFrame to CSV
     df_combined.to_csv(file_path, index=False)
+
 
     gc.collect()
     if args.data_env != 'local':
@@ -391,9 +357,6 @@ if __name__ == '__main__':
         # whether to use EA
         align = True
 
-        # temperature rescaling, for test entropy calculation
-        t = 2
-
         # whether to test balanced or imbalanced (2:1) target subject
         balanced = True
 
@@ -408,13 +371,13 @@ if __name__ == '__main__':
         if momentum:
             print('momentum: {}, momentum_param: {}'.format(momentum, momentum_param))
 
-        args = argparse.Namespace(feature_deep_dim=feature_deep_dim, align=align, lr=lr, t=t, max_epoch=max_epoch,
+        args = argparse.Namespace(feature_deep_dim=feature_deep_dim, align=align, lr=lr, max_epoch=max_epoch,
                                   trial_num=trial_num, time_sample_num=time_sample_num, sample_rate=sample_rate,
                                   N=N, chn=chn, class_num=class_num, stride=stride, steps=steps, calc_time=calc_time,
                                   paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced, data_path_MI = data_path_MI,
                                   finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param)
 
-        args.method = 'DELTA-TTA'
+        args.method = 'Tent'
         args.backbone = 'EEGNet'
 
         # train batch size
@@ -430,7 +393,7 @@ if __name__ == '__main__':
         total_acc = []
 
         # update multiple models, independently, from the source models
-        for s in [1, 2, 3, 4, 5]:
+        for s in [3, 4, 5]:
             args.SEED = s
 
             fix_random_seed(args.SEED)
@@ -442,7 +405,7 @@ if __name__ == '__main__':
             print(args.SEED)
             print(args)
 
-            args.local_dir = './data/' + str(data_name) + '/'
+            args.local_dir = data_path + str(data_name) + '/'
             args.result_dir = log_path
             my_log = LogRecord(args)
             my_log.log_init()

@@ -10,7 +10,7 @@ cd $workspace_folder
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
 # Execute the Python script with the specified arguments
-python3 "${workspace_folder}/download_data.py" \
-  --dataset_name "Lee2019_MI" \
+python3 "${workspace_folder}/download_data_1.py" \
+  --dataset_name "Schirrmeister2017" \
   --data_save "True" \
   --data_path "./data/"

@@ -8,11 +8,11 @@
             "name": "Python: Download data",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/download_data.py",
+            "program": "${workspaceFolder}/download_data_1.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--dataset_name", "Liu2024",
+                "--dataset_name", "Schirrmeister2017",
                 "--data_save", "True",
                 "--data_path", "./data/",
             ],
@@ -417,6 +417,29 @@
                 "--data_path", "./data/",
                 "--data_path_MI", "/home/jyt/workspace/transfer_models/datasets_MI/hand_elbow/derivatives",
                 "--log_path", "./logs/sar-debug-elbow_rest-momentum-cls/",
+                "--use_pretrained_model", "True",
+                "--finetune", "False",
+                "--momentum", "False",
+                "--momentum_param", "0.5",
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: Delta-elbow-rest-momentum-cls",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tl/delta.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "MI-elbow_rest",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--data_path_MI", "/home/jyt/workspace/transfer_models/datasets_MI/hand_elbow/derivatives",
+                "--log_path", "./logs/delta-debug-elbow_rest-momentum-cls/",
                 "--use_pretrained_model", "True",
                 "--finetune", "False",
                 "--momentum", "False",

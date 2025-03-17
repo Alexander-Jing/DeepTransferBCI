@@ -7,8 +7,12 @@ from easydict import EasyDict as edict
 # from tl.utils.utils import str2bool
 
 import moabb
-from moabb.datasets import BNCI2014001, BNCI2014002, BNCI2015001, Liu2024, Lee2019_MI
+from moabb.datasets import BNCI2014001, BNCI2014002, BNCI2015001, Lee2019_MI, BNCI2014_004, Schirrmeister2017
 from moabb.paradigms import MotorImagery, P300
+
+from moabb.datasets import utils
+from pooch import HTTPDownloader
+
 
 def str2bool(v):
     if isinstance(v, bool):
@@ -20,8 +24,16 @@ def str2bool(v):
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
-def dataset_to_file(dataset_name, data_save, data_path='./data/'):
+def dataset_to_file(dataset_name, data_save, data_path='./data/', proxy=None, timeout=60, retries=5):
     moabb.set_log_level("ERROR")
+    
+    # 1. 设置代理（如果提供）
+    if proxy:
+        os.environ["HTTP_PROXY"] = proxy
+        os.environ["HTTPS_PROXY"] = proxy
+    
+    # 2. 初始化数据集和范式
+    dataset, paradigm = None, None
     if dataset_name == 'BNCI2014001':
         dataset = BNCI2014001()
         paradigm = MotorImagery(n_classes=4)
@@ -34,13 +46,32 @@ def dataset_to_file(dataset_name, data_save, data_path='./data/'):
         dataset = BNCI2015001()
         paradigm = MotorImagery(n_classes=2)
         # (5600, 13, 2561) (5600,) 512Hz 12subjects * 2 classes * (200 + 200 + (200 for Subj 8/9/10/11)) trials * (2/3)sessions
-    elif dataset_name == "Liu2024":
-        dataset = Liu2024()
-        paradigm = MotorImagery(n_classes=2)
     elif dataset_name == "Lee2019_MI":
         dataset = Lee2019_MI()
         paradigm = MotorImagery(n_classes=2)
-
+    elif dataset_name == "BNCI2014_004":
+        # (6520, 3, 1126)  (6520, ) 250Hz 9subjects * 2 classes * (appro. 400trials offline and 320 trials online per subject)
+        dataset = BNCI2014_004()
+        paradigm = MotorImagery(n_classes=2)
+    elif dataset_name == "Schirrmeister2017":
+        # choosing 44 scenors from the 128 channels, donwsampled from 500Hz to 250Hz
+        # 44 scenors referring to https://github.com/robintibor/high-gamma-dataset/blob/master/example.py
+        # (13484, 44, 1000) (13484, ) 500Hz, 14 subjects * 4classes * ()
+        C_sensors = ['FC5', 'FC1', 'FC2', 'FC6', 'C3', 'C4', 'CP5',
+                 'CP1', 'CP2', 'CP6', 'FC3', 'FCz', 'FC4', 'C5', 'C1', 'C2',
+                 'C6',
+                 'CP3', 'CPz', 'CP4', 'FFC5h', 'FFC3h', 'FFC4h', 'FFC6h',
+                 'FCC5h',
+                 'FCC3h', 'FCC4h', 'FCC6h', 'CCP5h', 'CCP3h', 'CCP4h', 'CCP6h',
+                 'CPP5h',
+                 'CPP3h', 'CPP4h', 'CPP6h', 'FFC1h', 'FFC2h', 'FCC1h', 'FCC2h',
+                 'CCP1h',
+                 'CCP2h', 'CPP1h', 'CPP2h']
+        dataset = Schirrmeister2017()
+        paradigm = MotorImagery(n_classes=4, channels=C_sensors, resample=250)
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset_name}")
+        
     if data_save:
         print('preparing ' + str(dataset_name) + ' data...')
         X, labels, meta = paradigm.get_data(dataset=dataset, subjects=dataset.subject_list[:])
@@ -83,7 +114,7 @@ if __name__ == '__main__':
     print('data_path: {}, type: {}'.format(data_path, type(data_path)))
 
     # load the dataset
-    if dataset_name in ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'Lee2019_MI', 'Liu2024']:
+    if dataset_name in ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'Lee2019_MI', 'Liu2024', 'BNCI2014_004', 'Schirrmeister2017']:
         info = dataset_to_file(dataset_name, data_save=data_save, data_path=data_path)
 
     '''
