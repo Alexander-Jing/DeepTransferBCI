@@ -7,7 +7,7 @@ from easydict import EasyDict as edict
 # from tl.utils.utils import str2bool
 
 import moabb
-from moabb.datasets import BNCI2014001, BNCI2014002, BNCI2015001, Lee2019_MI, BNCI2014_004, Schirrmeister2017
+from moabb.datasets import BNCI2014001, BNCI2014002, BNCI2015001, Lee2019_MI, BNCI2014004, Schirrmeister2017
 from moabb.paradigms import MotorImagery, P300
 
 from moabb.datasets import utils
@@ -51,7 +51,7 @@ def dataset_to_file(dataset_name, data_save, data_path='./data/', proxy=None, ti
         paradigm = MotorImagery(n_classes=2)
     elif dataset_name == "BNCI2014_004":
         # (6520, 3, 1126)  (6520, ) 250Hz 9subjects * 2 classes * (appro. 400trials offline and 320 trials online per subject)
-        dataset = BNCI2014_004()
+        dataset = BNCI2014004()
         paradigm = MotorImagery(n_classes=2)
     elif dataset_name == "Schirrmeister2017":
         # choosing 44 scenors from the 128 channels, donwsampled from 500Hz to 250Hz
