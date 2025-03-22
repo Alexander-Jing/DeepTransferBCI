@@ -6,8 +6,8 @@ import numpy as np
 from sklearn import preprocessing
 import os
 import scipy.io as sio
-from utils.data_utils import traintest_split_cross_subject, traintest_split_domain_classifier, traintest_split_multisource, traintest_split_domain_classifier_pretest, traintest_split_multisource
-
+from utils.data_utils import traintest_split_cross_subject, traintest_split_cross_subject_meta, traintest_split_domain_classifier, traintest_split_multisource, traintest_split_domain_classifier_pretest, traintest_split_multisource
+import pandas as pd
 
 def data_process(args):
     '''
@@ -17,13 +17,15 @@ def data_process(args):
     '''
     dataset = args.data
 
-    if dataset == 'BNCI2014001-4':
+    if dataset in ['BNCI2014001-4', 'BNCI2014001-4-all']:
         X = np.load('./data/' + 'BNCI2014001' + '/X.npy')
         y = np.load('./data/' + 'BNCI2014001' + '/labels.npy')
+        meta = pd.read_csv('./data/' + 'BNCI2014001' + '/meta.csv')
         print(X.shape, y.shape)
     elif dataset != 'MI-hand_elbow' and dataset != 'MI-elbow_rest' and dataset != 'MI-hand_rest':
         X = np.load('./data/' + dataset + '/X.npy')
         y = np.load('./data/' + dataset + '/labels.npy')
+        meta = pd.read_csv('./data/' + dataset + '/meta.csv')
         print(X.shape, y.shape)
 
     num_subjects, paradigm, sample_rate = None, None, None
@@ -95,6 +97,33 @@ def data_process(args):
         indices = np.concatenate(indices, axis=0)
         X = X[indices]
         y = y[indices]
+    elif dataset == 'BNCI2014001-4-all':
+        paradigm = 'MI'
+        num_subjects = 9
+        sample_rate = 250
+        ch_num = 22
+
+        # using all the sessions
+        # X = X
+        # y = y
+    elif dataset == 'BNCI2014_004':
+        paradigm = 'MI'
+        num_subjects = 9
+        sample_rate = 250
+        ch_num = 3
+
+        # using all the sessions
+        # X = X
+        # y = y
+    elif dataset == 'Schirrmeister2017':
+        paradigm = 'MI'
+        num_subjects = 14
+        sample_rate = 250
+        ch_num = 44
+
+        # using all the sessions
+        # X = X
+        # y = y
     elif dataset == 'MI-hand_elbow':
         # hand_elbow dataset is MI of movements of hand and elbow on the same side of the limb
         # dataset paper: 
@@ -222,7 +251,7 @@ def data_process(args):
     y = le.fit_transform(y)
     print('data shape:', X.shape, ' labels shape:', y.shape)
     
-    return X, y, num_subjects, paradigm, sample_rate, ch_num
+    return X, y, num_subjects, paradigm, sample_rate, ch_num, meta
 
 
 def data_process_secondsession(dataset):
@@ -323,16 +352,19 @@ def read_mi_combine_tar(args):
         # Continual TTA
         X, y, num_subjects, paradigm, sample_rate, ch_num = data_process_secondsession(args.data)
     else:
-        X, y, num_subjects, paradigm, sample_rate, ch_num = data_process(args)
-
-    src_data, src_label, tar_data, tar_label = traintest_split_cross_subject(args.data, X, y, num_subjects, args.idt)
+        X, y, num_subjects, paradigm, sample_rate, ch_num, meta = data_process(args)
+    
+    if args.data in ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4']:
+        src_data, src_label, tar_data, tar_label = traintest_split_cross_subject(args.data, X, y, num_subjects, args.idt)
+    elif args.data in ['BNCI2014001-4-all', 'BNCI2014_004', 'Schirrmeister2017']:
+        src_data, src_label, tar_data, tar_label = traintest_split_cross_subject_meta(args.data, X, y, num_subjects, args.idt, meta)
 
     return src_data, src_label, tar_data, tar_label
 
 
 def read_mi_combine_domain(args):
 
-    X, y, num_subjects, paradigm, sample_rate, ch_num = data_process(args.data)
+    X, y, num_subjects, paradigm, sample_rate, ch_num, meta = data_process(args.data)
 
     src_data, src_label, tar_data, tar_label = traintest_split_domain_classifier(args.data, X, y, num_subjects, args.idt)
 
@@ -341,7 +373,7 @@ def read_mi_combine_domain(args):
 
 def read_mi_combine_domain_split(args):
 
-    X, y, num_subjects, paradigm, sample_rate, ch_num = data_process(args.data)
+    X, y, num_subjects, paradigm, sample_rate, ch_num, meta = data_process(args.data)
 
     src_data, src_label, tar_data, tar_label = traintest_split_domain_classifier_pretest(args.data, X, y, num_subjects, args.ratio)
 
@@ -349,7 +381,7 @@ def read_mi_combine_domain_split(args):
 
 
 def read_mi_multi_source(args):
-    X, y, num_subjects, paradigm, sample_rate, ch_num = data_process(args.data)
+    X, y, num_subjects, paradigm, sample_rate, ch_num, meta = data_process(args.data)
 
     src_data, src_label, tar_data, tar_label = traintest_split_multisource(args.data, X, y, num_subjects, args.idt)
 

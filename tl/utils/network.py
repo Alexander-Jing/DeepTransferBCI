@@ -17,9 +17,9 @@ def backbone_net(args, return_type='y'):
                         Chans=args.chn,
                         Samples=args.time_sample_num,
                         kernLenght=int(args.sample_rate // 2),
-                        F1=4,
+                        F1=8,
                         D=2,
-                        F2=8,
+                        F2=16,
                         dropoutRate=0.25,
                         norm_rate=0.5)
     if return_type == 'y':

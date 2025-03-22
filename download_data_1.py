@@ -36,7 +36,7 @@ def dataset_to_file(dataset_name, data_save, data_path='./data/', proxy=None, ti
     dataset, paradigm = None, None
     if dataset_name == 'BNCI2014001':
         dataset = BNCI2014001()
-        paradigm = MotorImagery(n_classes=4)
+        paradigm = MotorImagery(n_classes=4, fmin=0.5, fmax=100)
         # (5184, 22, 1001) (5184,) 250Hz 9subjects * 4classes * (72+72)trials for 2sessions
     elif dataset_name == 'BNCI2014002':
         dataset = BNCI2014002()

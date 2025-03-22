@@ -225,7 +225,7 @@ def train_target(args):
     X_src, y_src, X_tar, y_tar = read_mi_combine_tar(args)
     print('X_src, y_src, X_tar, y_tar:', X_src.shape, y_src.shape, X_tar.shape, y_tar.shape)
     dset_loaders = data_loader(X_src, y_src, X_tar, y_tar, args)
-    args.sample_rate = 6  # to set EEGNet kernal as 3
+    args.sample_rate = 64  # to set EEGNet kernal as 3
     netF, netC = backbone_net(args, return_type='xy')
     if args.data_env != 'local':
         netF, netC = netF.cuda(), netC.cuda()
@@ -391,7 +391,7 @@ if __name__ == '__main__':
     print('log_path: {}, type: {}'.format(log_path, type(log_path)))
     print('gpu_idx: {}, type: {}'.format(gpu_idx, type(gpu_idx)))
 
-    data_name_list = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4', 'MI-hand_elbow','MI-elbow_rest', 'MI-hand_rest']
+    data_name_list = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4', 'MI-hand_elbow','MI-elbow_rest', 'MI-hand_rest', 'BNCI2014001-4-all']
 
     dct = pd.DataFrame(columns=['dataset', 'avg', 'std', 's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13'])
 
@@ -404,6 +404,7 @@ if __name__ == '__main__':
         if data_name == 'MI-hand_elbow': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
         if data_name == 'MI-elbow_rest': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
         if data_name == 'MI-hand_rest': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
+        if data_name == 'BNCI2014001-4-all': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 4, 1001, 250, 576, 496
 
         # whether to use pretrained model
         # if source models have not been trained, set use_pretrained_model to False to train them
@@ -417,7 +418,7 @@ if __name__ == '__main__':
             max_epoch = 100
 
         # learning rate
-        lr = 0.0001
+        lr = 0.001
 
         # test batch size
         test_batch = 8
@@ -458,7 +459,7 @@ if __name__ == '__main__':
         args.backbone = 'EEGNet'
 
         # train batch size
-        args.batch_size = 32
+        args.batch_size = 64
 
         # GPU device id
         try:
@@ -470,7 +471,7 @@ if __name__ == '__main__':
         total_acc = []
 
         # update multiple models, independently, from the source models
-        for s in [3, 4, 5]:
+        for s in [1, 2, 3, 4, 5]:
             args.SEED = s
 
             fix_random_seed(args.SEED)
