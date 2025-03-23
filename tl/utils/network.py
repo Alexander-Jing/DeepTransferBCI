@@ -9,19 +9,34 @@ import torch.nn.functional as F
 import torch.nn.utils.weight_norm as weightNorm
 
 from models.EEGNet import EEGNet_feature, EEGNet
+from models.EEGTCNet import EEGTCNet_feature
 from models.FC import FC, FC_xy
 
 
 def backbone_net(args, return_type='y'):
-    netF = EEGNet_feature(n_classes=args.class_num,
-                        Chans=args.chn,
-                        Samples=args.time_sample_num,
-                        kernLenght=int(args.sample_rate // 2),
-                        F1=8,
-                        D=2,
-                        F2=16,
-                        dropoutRate=0.25,
-                        norm_rate=0.5)
+    if args.backbone=='EEGNet':
+        netF = EEGNet_feature(n_classes=args.class_num,
+                            Chans=args.chn,
+                            Samples=args.time_sample_num,
+                            kernLenght=int(args.sample_rate // 2),
+                            F1=8,
+                            D=2,
+                            F2=16,
+                            dropoutRate=0.25,
+                            norm_rate=0.5)
+    if args.backbone=='EEGTCNet':
+        netF = EEGTCNet_feature(n_classes=args.class_num,
+                            Chans=args.chn,
+                            Samples=args.time_sample_num,
+                            kernLenght=int(args.sample_rate // 2),
+                            F1=8,
+                            D=2,
+                            dropout_eeg=0.2,
+                            filt=12,
+                            kernel_s=4,
+                            layers=2,
+                            dropout=0.3,
+                            )
     if return_type == 'y':
         netC = FC(args.feature_deep_dim, args.class_num)
     elif return_type == 'xy':

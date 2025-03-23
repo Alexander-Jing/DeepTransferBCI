@@ -448,14 +448,14 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
     Xs, Ys = tr.from_numpy(Xs).to(
         tr.float32), tr.from_numpy(Ys.reshape(-1, )).to(tr.long)
     
-    if 'EEGNet' in args.backbone or 'Conformer' in args.backbone:
+    if args.backbone in ['EEGNet', 'Conformer', 'EEGTCNet']:
         Xs = Xs.unsqueeze_(3)
         Xs = Xs.permute(0, 3, 1, 2)
 
     Xt, Yt = tr.from_numpy(Xt).to(
         tr.float32), tr.from_numpy(Yt.reshape(-1, )).to(tr.long)
     
-    if 'EEGNet' in args.backbone or 'Conformer' in args.backbone:
+    if args.backbone in ['EEGNet', 'Conformer', 'EEGTCNet']:
         Xt = Xt.unsqueeze_(3)
         Xt = Xt.permute(0, 3, 1, 2)
 
@@ -501,7 +501,7 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
 
         Xt_aligned = tr.from_numpy(Xt_aligned).to(tr.float32)
         Xt_aligned = Xt_aligned.unsqueeze_(3)
-        if 'EEGNet' in args.backbone:
+        if args.backbone in ['EEGNet', 'Conformer', 'EEGTCNet']:
             Xt_aligned = Xt_aligned.permute(0, 3, 1, 2)
         if args.data_env != 'local':
             Xt_aligned = Xt_aligned.cuda()
@@ -513,7 +513,7 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
     if not args.finetune:
         # use all data for target test
         Xt_copy = Xt_copy.unsqueeze_(3)
-        if 'EEGNet' in args.backbone or 'Conformer' in args.backbone:
+        if args.backbone in ['EEGNet', 'Conformer', 'EEGTCNet']:
             Xt_copy = Xt_copy.permute(0, 3, 1, 2)
         if args.data_env != 'local':
             Xt_copy = Xt_copy.cuda()
@@ -539,7 +539,7 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
 
         Xt_ft = Xt_ft.unsqueeze_(3)
         Xt_test = Xt_test.unsqueeze_(3)
-        if 'EEGNet' in args.backbone or 'Conformer' in args.backbone:
+        if args.backbone in ['EEGNet', 'Conformer', 'EEGTCNet']:
             Xt_ft = Xt_ft.permute(0, 3, 1, 2)
             Xt_test = Xt_test.permute(0, 3, 1, 2)
         if args.data_env != 'local':

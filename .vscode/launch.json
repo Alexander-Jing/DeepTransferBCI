@@ -467,6 +467,7 @@
                 "--finetune", "False",
                 "--momentum", "False",
                 "--momentum_param", "0.5",
+                "--gpu_idx", "1",
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"

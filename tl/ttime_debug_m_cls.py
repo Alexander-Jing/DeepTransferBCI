@@ -225,7 +225,7 @@ def train_target(args):
     X_src, y_src, X_tar, y_tar = read_mi_combine_tar(args)
     print('X_src, y_src, X_tar, y_tar:', X_src.shape, y_src.shape, X_tar.shape, y_tar.shape)
     dset_loaders = data_loader(X_src, y_src, X_tar, y_tar, args)
-    args.sample_rate = 64  # to set EEGNet kernal as 3
+    args.sample_rate = 64  # to set EEGNet kernal as 32
     netF, netC = backbone_net(args, return_type='xy')
     if args.data_env != 'local':
         netF, netC = netF.cuda(), netC.cuda()
@@ -404,7 +404,7 @@ if __name__ == '__main__':
         if data_name == 'MI-hand_elbow': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
         if data_name == 'MI-elbow_rest': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
         if data_name == 'MI-hand_rest': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
-        if data_name == 'BNCI2014001-4-all': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 4, 1001, 250, 576, 496
+        if data_name == 'BNCI2014001-4-all': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 4, 1001, 250, 576, 372
 
         # whether to use pretrained model
         # if source models have not been trained, set use_pretrained_model to False to train them
