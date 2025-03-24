@@ -458,7 +458,7 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--dataset_name", "BNCI2014001-4-all",
+                "--dataset_name", "BNCI2014001-4",
                 "--data_save", "True",
                 "--data_path", "./data/",
                 "--data_path_MI", "None",

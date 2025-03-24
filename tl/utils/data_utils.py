@@ -45,19 +45,21 @@ def traintest_split_cross_subject_meta(dataset, X, y, num_subjects, test_subject
         # We apply the leave-one-subject-out method, using the test session for the target subject while train session for the source subjects
         # Create a mask for the test set: 1test data of the test subject
         _test_subject_id = test_subject_id + 1  # the idx of subjects start from 1
-        mask_test = (meta.subject == _test_subject_id) & (meta.session == 'session_T')  # Both conditions must be true
+        mask_test = (meta.subject == _test_subject_id) #& (meta.session == 'session_T')  # Both conditions must be true
         # Create a mask for the training set: 0train data of the remaining subjects
-        mask_train = (meta.subject != _test_subject_id) & (meta.session == 'session_T')
+        mask_train = (meta.subject != _test_subject_id) #& (meta.session == 'session_T')
 
         # Extract test set data using the mask
         _mask_test = mask_test.to_numpy()
-        test_x = X[_mask_test]
-        test_y = y[_mask_test]
+        id_test = np.arange(y.shape[0])[_mask_test]
+        test_x = X[id_test]
+        test_y = y[id_test]
         
         # Extract training set data using the mask
         _mask_train = mask_train.to_numpy()
-        train_x = X[_mask_train]
-        train_y = y[_mask_train]
+        id_train = np.arange(y.shape[0])[_mask_train]
+        train_x = X[id_train]
+        train_y = y[id_train]
         
         # Print the shape of the training and test sets for verification
         print(f'Test subject s{test_subject_id}')

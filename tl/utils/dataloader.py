@@ -89,7 +89,11 @@ def data_process(args):
         num_subjects = 9
         sample_rate = 250
         ch_num = 22
-
+        
+        # using all the sessions
+        # X = X
+        # y = y
+        """
         # only use session T, remove session E
         indices = []
         for i in range(num_subjects):
@@ -97,6 +101,7 @@ def data_process(args):
         indices = np.concatenate(indices, axis=0)
         X = X[indices]
         y = y[indices]
+        """
     elif dataset == 'BNCI2014001-4-all':
         paradigm = 'MI'
         num_subjects = 9
