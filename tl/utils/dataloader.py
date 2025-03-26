@@ -17,7 +17,7 @@ def data_process(args):
     '''
     dataset = args.data
 
-    if dataset in ['BNCI2014001-4', 'BNCI2014001-4-all']:
+    if dataset in ['BNCI2014001-4', 'BNCI2014001-4-all', 'BNCI2014001-4-train']:
         X = np.load('./data/' + 'BNCI2014001' + '/X.npy')
         y = np.load('./data/' + 'BNCI2014001' + '/labels.npy')
         meta = pd.read_csv('./data/' + 'BNCI2014001' + '/meta.csv')
@@ -102,6 +102,20 @@ def data_process(args):
         X = X[indices]
         y = y[indices]
         """
+    elif dataset == 'BNCI2014001-4-train':
+        paradigm = 'MI'
+        num_subjects = 9
+        sample_rate = 250
+        ch_num = 22
+        
+        # only use session T, remove session E
+        indices = []
+        for i in range(num_subjects):
+            indices.append(np.arange(288) + (576 * i))
+        indices = np.concatenate(indices, axis=0)
+        X = X[indices]
+        y = y[indices]
+        
     elif dataset == 'BNCI2014001-4-all':
         paradigm = 'MI'
         num_subjects = 9
@@ -359,7 +373,7 @@ def read_mi_combine_tar(args):
     else:
         X, y, num_subjects, paradigm, sample_rate, ch_num, meta = data_process(args)
     
-    if args.data in ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4']:
+    if args.data in ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4', 'BNCI2014001-4-train']:
         src_data, src_label, tar_data, tar_label = traintest_split_cross_subject(args.data, X, y, num_subjects, args.idt)
     elif args.data in ['BNCI2014001-4-all', 'BNCI2014_004', 'Schirrmeister2017']:
         src_data, src_label, tar_data, tar_label = traintest_split_cross_subject_meta(args.data, X, y, num_subjects, args.idt, meta)

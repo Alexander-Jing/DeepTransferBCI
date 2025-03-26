@@ -13,11 +13,11 @@ export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
 # Execute the Python script with the specified arguments
 python3 $progarm_path \
-  --dataset_name "BNCI2014001-4-all" \
+  --dataset_name "BNCI2014001-4-train" \
   --data_save "True" \
   --data_path "./data/" \
   --data_path_MI "None" \
-  --log_path "./logs/ttime-debug-BNCI2014001-momentum-cls-train288-1/" \
+  --log_path "./logs/ttime-debug-BNCI2014001-4-momentum-cls-train288/" \
   --use_pretrained_model "False" \
   --finetune "False" \
   --momentum "False" \
