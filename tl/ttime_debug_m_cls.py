@@ -206,12 +206,12 @@ def TTIME(loader, model, args, balanced=True):
         pred = torch.squeeze(predict).float()
         score = accuracy_score(y_true, pred)
         if args.data_name == 'BNCI2014001-4':
-            y_pred = np.array(y_pred).reshape(-1, args.class_num)  
+            y_pred = np.array(y_pred).reshape(-1, args.class_num)  # change of class_num
         else:
-            y_pred = np.array(y_pred).reshape(-1, args.class_num)  
+            y_pred = np.array(y_pred).reshape(-1, args.class_num)  # change of class_num
     else:
         predict = torch.from_numpy(np.array(y_pred)).to(torch.float32).reshape(-1, args.class_num)
-        y_pred = np.array(predict).reshape(-1, args.class_num)  
+        y_pred = np.array(predict).reshape(-1, args.class_num)  # change of class_num
         score = roc_auc_score(y_true, y_pred)
 
     return score * 100, (y_pred, predict, y_true)
@@ -225,7 +225,7 @@ def train_target(args):
     X_src, y_src, X_tar, y_tar = read_mi_combine_tar(args)
     print('X_src, y_src, X_tar, y_tar:', X_src.shape, y_src.shape, X_tar.shape, y_tar.shape)
     dset_loaders = data_loader(X_src, y_src, X_tar, y_tar, args)
-    # args.sample_rate = 64  # to set EEGNet kernal as 32
+    # args.sample_rate = 64  # to set EEGNet kernal as 32, delete this
     netF, netC = backbone_net(args, return_type='xy')
     if args.data_env != 'local':
         netF, netC = netF.cuda(), netC.cuda()
