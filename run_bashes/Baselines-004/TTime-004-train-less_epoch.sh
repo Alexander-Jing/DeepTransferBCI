@@ -1,0 +1,29 @@
+#!/bin/bash
+
+# Define the workspace folder
+workspace_folder="/home/jyt/workspace/DeepTransferBCI"
+# Change the current directory to the workspace folder
+cd $workspace_folder
+
+# Define the program path
+progarm_path="tl/ttime_debug_m_cls.py"
+
+# Set the PYTHONPATH environment variable
+export PYTHONPATH="${PYTHONPATH}:$(pwd)"
+
+# Execute the Python script with the specified arguments
+python3 $progarm_path \
+  --dataset_name "BNCI2014_004-train" \
+  --data_save "True" \
+  --data_path "./data/" \
+  --data_path_MI "None" \
+  --log_path "./logs/ttime-BNCI2014_004-train-lessepoch/" \
+  --use_pretrained_model "False" \
+  --finetune "False" \
+  --momentum "False" \
+  --momentum_param "0.5" \
+  --gpu_idx "0" \
+  --align "True" \
+  --batch_size "32" \
+  --lr "0.001"  \
+  --epoch "20"

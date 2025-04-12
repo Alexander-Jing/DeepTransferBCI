@@ -289,8 +289,8 @@ def cal_score_online(loader, model, args):
                 # transform current test sample
                 inputs = np.dot(sqrtRefEA, inputs)
                 inputs = inputs.reshape(1, 1, args.chn, args.time_sample_num)
-
-            inputs = torch.from_numpy(inputs).to(torch.float32)
+                inputs = torch.from_numpy(inputs).to(torch.float32)
+            
             if args.data_env != 'local':
                 inputs = inputs.cuda()
             _, outputs = model(inputs)
@@ -318,6 +318,59 @@ def cal_score_online(loader, model, args):
 
     return score * 100
 
+def cal_score_online_source(loader, model, args):
+    y_true = []
+    y_pred = []
+    model.eval()
+    # initialize test reference matrix for Incremental EA
+    if args.align:
+        R = 0
+    with tr.no_grad():
+        iter_test = iter(loader)
+        for i in range(len(loader)):
+            data = next(iter_test)
+            inputs = data[0].cpu()
+            labels = data[1]
+            if i == 0:
+                data_cum = inputs.float().cpu()
+            else:
+                data_cum = tr.cat((data_cum, inputs.float().cpu()), 0)
+
+            if args.align:
+                # update reference matrix
+                R = EA_online(inputs.reshape(args.chn, args.time_sample_num), R, i)
+                sqrtRefEA = fractional_matrix_power(R, -0.5)
+                # transform current test sample
+                inputs = np.dot(sqrtRefEA, inputs)
+                inputs = inputs.reshape(1, 1, args.chn, args.time_sample_num)
+                inputs = torch.from_numpy(inputs).to(torch.float32)
+            
+            if args.data_env != 'local':
+                inputs = inputs.cuda()
+            _, outputs = model(inputs)
+            outputs = outputs.float().cpu()
+            labels = labels.float().cpu()
+            _, predict = tr.max(outputs, 1)
+            pred = tr.squeeze(predict).float()
+            y_pred.append(pred.item())
+            y_true.append(labels.item())
+
+            if i == 0:
+                all_output = outputs.float().cpu()
+                all_label = labels.float()
+            else:
+                all_output = tr.cat((all_output, outputs.float().cpu()), 0)
+                all_label = tr.cat((all_label, labels.float()), 0)
+
+    if hasattr(args, 'balanced') and args.balanced:
+        score = accuracy_score(y_true, y_pred)
+    else:
+        all_output = nn.Softmax(dim=1)(all_output)
+        true = all_label.cpu()
+        pred = all_output[:, 1].detach().numpy()
+        score = roc_auc_score(true, pred)
+
+    return score * 100, ((all_output.numpy()).reshape(-1, args.class_num), tr.tensor(y_pred), y_true)
 
 def cal_auc_comb(loader, model, flag=True, fc=None, args=None):
     start_test = True
@@ -421,13 +474,53 @@ def data_alignment(X, num_subjects, args):
             out.append(tmp_x)
         X = np.concatenate(out, axis=0)
         print('after EA:', X.shape)
+    elif args.data == "BNCI2014_004-train":
+        # upsampling for unequal distributions across subjects, i.e., each subject is upsampled to different num of trials
+        print('before EA:', X.shape)
+        out = []
+        inds = [400, 400, 400, 420, 420, 400, 400, 440, 400]
+        if len(X) > 400*2:  # if it is training set
+            inds = np.delete(inds, args.idt)
+        for i in range(num_subjects):
+            if len(X) > 400*2:  # if it is training set in source
+                tmp_x = EA(X[np.sum(inds[:i]):np.sum(inds[:i + 1]), :, :])
+            else:  # if it is test set in target 
+                tmp_x = EA(X[0:int(inds[args.idt]), :, :])
+            out.append(tmp_x)
+        X = np.concatenate(out, axis=0)
+        print('after EA:', X.shape)
+    elif args.data == "BNCI2014_004-test":
+        # upsampling for unequal distributions across subjects, i.e., each subject is upsampled to different num of trials
+        print('before EA:', X.shape)
+        out = []
+        inds = [400, 400, 400, 420, 420, 400, 400, 440, 400]
+        inds_test = [320, 280, 320, 320, 320, 320, 320, 320, 320]
+        if len(X) > 400*2:  # if it is training set
+            inds = np.delete(inds, args.idt)
+        for i in range(num_subjects):
+            if len(X) > 400*2:  # if it is training set in source
+                #_X = X[np.sum(inds[:i]):np.sum(inds[:i + 1]), :, :]  # for debug
+                tmp_x = EA(X[np.sum(inds[:i]):np.sum(inds[:i + 1]), :, :])
+            else:  # if it is test set in target 
+                # id_ = int(inds_test[args.idt])  # for debug
+                # _X = X[0:int(inds_test[args.idt]), :, :]  # for debug
+                tmp_x = EA(X[0:int(inds_test[args.idt]), :, :])
+            out.append(tmp_x)
+        X = np.concatenate(out, axis=0)
+        print('after EA:', X.shape)
     else:
         print('before EA:', X.shape)
         out = []
+        #_out = []  # only for debug
         for i in range(num_subjects):
+            
+            _X = X[X.shape[0] // num_subjects * i:X.shape[0] // num_subjects * (i + 1), :, :]
+
             tmp_x = EA(X[X.shape[0] // num_subjects * i:X.shape[0] // num_subjects * (i + 1), :, :])
             out.append(tmp_x)
+            #_out.append(_X)
         X = np.concatenate(out, axis=0)
+        #_X = np.concatenate(_out, axis=0)
         print('after EA:', X.shape)
     return X
 
@@ -448,14 +541,14 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
     Xs, Ys = tr.from_numpy(Xs).to(
         tr.float32), tr.from_numpy(Ys.reshape(-1, )).to(tr.long)
     
-    if args.backbone in ['EEGNet', 'Conformer', 'EEGTCNet']:
+    if args.backbone in ['EEGNet', 'Conformer', 'EEGTCNet','EEGNet-4,2']:
         Xs = Xs.unsqueeze_(3)
         Xs = Xs.permute(0, 3, 1, 2)
 
     Xt, Yt = tr.from_numpy(Xt).to(
         tr.float32), tr.from_numpy(Yt.reshape(-1, )).to(tr.long)
     
-    if args.backbone in ['EEGNet', 'Conformer', 'EEGTCNet']:
+    if args.backbone in ['EEGNet', 'Conformer', 'EEGTCNet','EEGNet-4,2']:
         Xt = Xt.unsqueeze_(3)
         Xt = Xt.permute(0, 3, 1, 2)
 
@@ -501,7 +594,7 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
 
         Xt_aligned = tr.from_numpy(Xt_aligned).to(tr.float32)
         Xt_aligned = Xt_aligned.unsqueeze_(3)
-        if args.backbone in ['EEGNet', 'Conformer', 'EEGTCNet']:
+        if args.backbone in ['EEGNet', 'Conformer', 'EEGTCNet','EEGNet-4,2']:
             Xt_aligned = Xt_aligned.permute(0, 3, 1, 2)
         if args.data_env != 'local':
             Xt_aligned = Xt_aligned.cuda()
@@ -513,7 +606,7 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
     if not args.finetune:
         # use all data for target test
         Xt_copy = Xt_copy.unsqueeze_(3)
-        if args.backbone in ['EEGNet', 'Conformer', 'EEGTCNet']:
+        if args.backbone in ['EEGNet', 'Conformer', 'EEGTCNet','EEGNet-4,2']:
             Xt_copy = Xt_copy.permute(0, 3, 1, 2)
         if args.data_env != 'local':
             Xt_copy = Xt_copy.cuda()
@@ -539,7 +632,7 @@ def data_loader(Xs=None, Ys=None, Xt=None, Yt=None, args=None):
 
         Xt_ft = Xt_ft.unsqueeze_(3)
         Xt_test = Xt_test.unsqueeze_(3)
-        if args.backbone in ['EEGNet', 'Conformer', 'EEGTCNet']:
+        if args.backbone in ['EEGNet', 'Conformer', 'EEGTCNet','EEGNet-4,2']:
             Xt_ft = Xt_ft.permute(0, 3, 1, 2)
             Xt_test = Xt_test.permute(0, 3, 1, 2)
         if args.data_env != 'local':

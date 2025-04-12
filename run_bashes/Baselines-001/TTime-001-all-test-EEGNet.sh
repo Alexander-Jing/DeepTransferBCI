@@ -13,12 +13,18 @@ export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
 # Execute the Python script with the specified arguments
 python3 $progarm_path \
-  --dataset_name "BNCI2014001-4-all" \
+  --dataset_name "BNCI2014001-4-test" \
   --data_save "True" \
   --data_path "./data/" \
   --data_path_MI "None" \
-  --log_path "./logs/ttime-debug-BNCI2014001-momentum-cls-train288-1/" \
+  --log_path "./logs/ttime-BNCI2014001-test-EEGNet/" \
   --use_pretrained_model "False" \
   --finetune "False" \
   --momentum "False" \
-  --momentum_param "0.5"
+  --momentum_param "0.5" \
+  --gpu_idx "1" \
+  --align "True" \
+  --batch_size "32" \
+  --lr "0.001"  \
+  --epoch "100"  \
+  --backbone "EEGNet"

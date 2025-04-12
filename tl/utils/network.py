@@ -24,6 +24,16 @@ def backbone_net(args, return_type='y'):
                             F2=16,
                             dropoutRate=0.25,
                             norm_rate=0.5)
+    if args.backbone=='EEGNet-4,2':
+        netF = EEGNet_feature(n_classes=args.class_num,
+                            Chans=args.chn,
+                            Samples=args.time_sample_num,
+                            kernLenght=int(args.sample_rate // 2),
+                            F1=4,
+                            D=2,
+                            F2=8,
+                            dropoutRate=0.25,
+                            norm_rate=0.5)
     if args.backbone=='EEGTCNet':
         netF = EEGTCNet_feature(n_classes=args.class_num,
                             Chans=args.chn,

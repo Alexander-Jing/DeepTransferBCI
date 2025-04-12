@@ -45,6 +45,30 @@ def traintest_split_cross_subject_meta(dataset, X, y, num_subjects, test_subject
         # We apply the leave-one-subject-out method, using the test session for the target subject while train session for the source subjects
         # Create a mask for the test set: 1test data of the test subject
         _test_subject_id = test_subject_id + 1  # the idx of subjects start from 1
+        mask_test = (meta.subject == _test_subject_id) #& (meta.session == 'session_T')  # Both conditions must be true
+        # Create a mask for the training set: 0train data of the remaining subjects
+        mask_train = (meta.subject != _test_subject_id) #& (meta.session == 'session_T')
+
+        # Extract test set data using the mask
+        _mask_test = mask_test.to_numpy()
+        id_test = np.arange(y.shape[0])[_mask_test]
+        test_x = X[id_test]
+        test_y = y[id_test]
+        
+        # Extract training set data using the mask
+        _mask_train = mask_train.to_numpy()
+        id_train = np.arange(y.shape[0])[_mask_train]
+        train_x = X[id_train]
+        train_y = y[id_train]
+        
+        # Print the shape of the training and test sets for verification
+        print(f'Test subject s{test_subject_id}')
+        print('Training/Test split:', train_x.shape, test_x.shape)
+
+    if dataset=='BNCI2014001-4-train':
+        # We apply the leave-one-subject-out method, using the test session for the target subject while train session for the source subjects
+        # Create a mask for the test set: 1test data of the test subject
+        _test_subject_id = test_subject_id + 1  # the idx of subjects start from 1
         mask_test = (meta.subject == _test_subject_id) & (meta.session == 'session_T')  # Both conditions must be true
         # Create a mask for the training set: 0train data of the remaining subjects
         mask_train = (meta.subject != _test_subject_id) & (meta.session == 'session_T')
@@ -65,12 +89,37 @@ def traintest_split_cross_subject_meta(dataset, X, y, num_subjects, test_subject
         print(f'Test subject s{test_subject_id}')
         print('Training/Test split:', train_x.shape, test_x.shape)
     
-    if dataset=='BNCI2014_004':
+    if dataset=='BNCI2014001-4-test':
+        # We apply the leave-one-subject-out method, using the test session for the target subject while train session for the source subjects
+        # Create a mask for the test set: 1test data of the test subject
+        _test_subject_id = test_subject_id + 1  # the idx of subjects start from 1
+        mask_test = (meta.subject == _test_subject_id) & (meta.session == 'session_E')  # Both conditions must be true
+        # Create a mask for the training set: 0train data of the remaining subjects
+        mask_train = (meta.subject != _test_subject_id) & (meta.session == 'session_T')
+
+        # Extract test set data using the mask
+        _mask_test = mask_test.to_numpy()
+        id_test = np.arange(y.shape[0])[_mask_test]
+        test_x = X[id_test]
+        test_y = y[id_test]
+        
+        # Extract training set data using the mask
+        _mask_train = mask_train.to_numpy()
+        id_train = np.arange(y.shape[0])[_mask_train]
+        train_x = X[id_train]
+        train_y = y[id_train]
+        
+        # Print the shape of the training and test sets for verification
+        print(f'Test subject s{test_subject_id}')
+        print('Training/Test split:', train_x.shape, test_x.shape)
+    
+    if dataset=='BNCI2014_004-train':
         # We apply the leave-one-subject-out method, using the test session for the target subject while train session for the source subjects
         # Create a mask for the test set: '3test' and '4test' data of the test subject
         _test_subject_id = test_subject_id + 1  # the idx of subjects start from 1
+        # Create a mask for the testing set: '0train', '1train', and '2train' data of the remaining subjects
         mask_test = (meta.subject == _test_subject_id) & (
-            (meta.session == '3test') | (meta.session == '4test')  # Either '3test' or '4test'
+            (meta.session == '0train') | (meta.session == '1train') | (meta.session == '2train')  
         )
         # Create a mask for the training set: '0train', '1train', and '2train' data of the remaining subjects
         mask_train = (meta.subject != _test_subject_id) & (
@@ -78,12 +127,45 @@ def traintest_split_cross_subject_meta(dataset, X, y, num_subjects, test_subject
         )
 
         # Extract test set data using the mask
-        test_x = X[mask_test.to_numpy()]
-        test_y = y[mask_test.to_numpy()]
+        _mask_test = mask_test.to_numpy()
+        id_test = np.arange(y.shape[0])[_mask_test]
+        test_x = X[id_test]
+        test_y = y[id_test]
         
         # Extract training set data using the mask
-        train_x = X[mask_train.to_numpy()]
-        train_y = y[mask_train.to_numpy()]
+        _mask_train = mask_train.to_numpy()
+        id_train = np.arange(y.shape[0])[_mask_train]
+        train_x = X[id_train]
+        train_y = y[id_train]
+        
+        # Print the shape of the training and test sets for verification
+        print(f'Test subject s{test_subject_id}')
+        print('Training/Test split:', train_x.shape, test_x.shape)
+    
+    if dataset=='BNCI2014_004-test':
+        # We apply the leave-one-subject-out method, using the test session for the target subject while train session for the source subjects
+        # Create a mask for the test set: '3test' and '4test' data of the test subject
+        _test_subject_id = test_subject_id + 1  # the idx of subjects start from 1
+        # Create a mask for the testing set: '0train', '1train', and '2train' data of the remaining subjects
+        mask_test = (meta.subject == _test_subject_id) & (
+            (meta.session == '3test') | (meta.session == '4test')
+        )
+        # Create a mask for the training set: '0train', '1train', and '2train' data of the remaining subjects
+        mask_train = (meta.subject != _test_subject_id) & (
+            (meta.session == '0train') | (meta.session == '1train') | (meta.session == '2train')  # Any of the training sessions
+        )
+
+        # Extract test set data using the mask
+        _mask_test = mask_test.to_numpy()
+        id_test = np.arange(y.shape[0])[_mask_test]
+        test_x = X[id_test]
+        test_y = y[id_test]
+        
+        # Extract training set data using the mask
+        _mask_train = mask_train.to_numpy()
+        id_train = np.arange(y.shape[0])[_mask_train]
+        train_x = X[id_train]
+        train_y = y[id_train]
         
         # Print the shape of the training and test sets for verification
         print(f'Test subject s{test_subject_id}')

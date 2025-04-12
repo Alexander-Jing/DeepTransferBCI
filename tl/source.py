@@ -6,162 +6,24 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
+import csv
+import copy
 
 from tl.utils.utils import str2bool
 from utils.network import backbone_net
 from utils.LogRecord import LogRecord
 from utils.dataloader import read_mi_combine_tar
-from utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist
+from utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, cal_score_online_source, makedir_if_not_exist
 from utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
-from sklearn.metrics import roc_auc_score, accuracy_score
 from utils.loss import Entropy
-
+from sklearn.metrics import roc_auc_score, accuracy_score
 
 import gc
 import sys
+import time
 
-# This is the implementation of T3A from paper:
-# Iwasawa Y, Matsuo Y. Test-time classifier adjustment module for model-agnostic domain generalization[J]. Advances in Neural Information Processing Systems, 2021, 34: 2427-2440.
-# @Time    : 2023/07/07
-# @Author  : Siyang Li
-# @File    : t3a.py
-# from github https://github.com/sylyoung/DeepTransferEEG/tree/main
-
-def T3A(loader, model, args, balanced=True, weights=None):
-    # T3A
-
-    y_true = []
-    y_pred = []
-    ents = []
-
-    feature_dim = len(weights[0][0])
-    # class prototypes, initialized with FC layer weights
-    protos = weights
-
-    """
-    a = np.array([-1])
-    b = np.array([-1])
-    # entropy records
-    ent_records = [a, b]
-    """
-    ent_records = []
-    # extend it to the multi-class scenario 
-    for cls_idx in range(args.class_num):
-        _a = np.array([-1])
-        ent_records.append(_a)
-
-    # size of support set
-    M = 10
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-
-    # initialize test reference matrix for Incremental EA
-    if args.align:
-        R = 0
-
-    iter_test = iter(loader)
-
-    # loop through test data stream one by one
-    for i in range(len(loader)):
-        #################### Phase 1: target label prediction ####################
-        model.eval()
-        data = next(iter_test)
-        inputs = data[0]
-        labels = data[1]
-        inputs = inputs.reshape(1, 1, inputs.shape[-2], inputs.shape[-1]).cpu()
-
-        # accumulate test data
-        if i == 0:
-            data_cum = inputs.float().cpu()
-            labels_cum = labels.float().cpu()
-        else:
-            data_cum = torch.cat((data_cum, inputs.float().cpu()), 0)
-            labels_cum = torch.cat((labels_cum, labels.float().cpu()), 0)
-
-        # Incremental EA
-        if args.align:
-            # update reference matrix
-            R = EA_online(inputs.reshape(args.chn, args.time_sample_num), R, i + 1)
-            sqrtRefEA = fractional_matrix_power(R, -0.5)
-            # transform current test sample
-            inputs = np.dot(sqrtRefEA, inputs)
-            inputs = inputs.reshape(1, 1, args.chn, args.time_sample_num)
-        else:
-            inputs = data_cum[i].numpy()
-            inputs = inputs.reshape(1, 1, inputs.shape[1], inputs.shape[2])
-
-        if args.data_env != 'local':
-            inputs = torch.from_numpy(inputs).to(torch.float32).cuda()
-        else:
-            inputs = torch.from_numpy(inputs).to(torch.float32)
-
-        # output for the presudo labels
-        features_test, outputs = model(inputs)
-
-        softmax_out = nn.Softmax(dim=1)(outputs)
-        ent = Entropy(softmax_out)
-        ents.append(np.round(ent.item(), 4))
-
-        # calculate center of each class in the support set
-        """
-        if len(protos[0]) == 1:
-            prototype0 = protos[0][0]
-        else:
-            prototype0 = torch.mean(torch.stack(protos[0]), dim=0)
-        if len(protos[1]) == 1:
-            prototype1 = protos[1][0]
-        else:
-            prototype1 = torch.mean(torch.stack(protos[1]), dim=0)
-        curr_protos = torch.stack((prototype0, prototype1))
-        """
-        curr_protos_list = []
-        for cls_idx in range(args.class_num):
-            if len(protos[cls_idx]) == 1:
-                _prototype = protos[cls_idx][0]
-            else:
-                _prototype = torch.mean(torch.stack(protos[cls_idx]), dim=0)
-            
-            curr_protos_list.append(_prototype)
-        
-        curr_protos = torch.stack(curr_protos_list)
-        
-        if args.data_env != 'local':
-            curr_protos = curr_protos.cuda()
-        outputs = torch.mm(features_test, curr_protos.T)  # predict the output via the support set
-
-        outputs = outputs.float().cpu()
-        labels = labels.float().cpu()
-        _, predict = torch.max(outputs, 1)
-        pred = torch.squeeze(predict).float()
-
-        id_ = int(pred)
-        
-        # update the support set
-        if len(ent_records[id_]) < M:
-            ent_records[id_] = np.append(ent_records[id_], np.round(ent.cpu().item(), 4))
-            protos[id_].append(features_test.reshape(feature_dim).cpu())
-        else:  # remove highest entropy term
-            ind = np.argmax(ent_records[id_])
-            max_ent = np.max(ent_records[id_])
-            if ent < max_ent:
-                ent_records[id_] = np.delete(ent_records[id_], ind)
-                del protos[id_][ind]
-                ent_records[id_] = np.append(ent_records[id_], np.round(ent.cpu().item(), 4))
-                protos[id_].append(features_test.reshape(feature_dim).cpu())
-
-        y_pred.append(pred.item())
-        y_true.append(labels.item())
-
-    # T3A do not use the softmax output
-    if balanced:
-        score = accuracy_score(y_true, y_pred)
-    else:
-        score = roc_auc_score(y_true, y_pred)
-
-    return score * 100, (y_pred, y_true)
-
-
+# Only use the source model
 def train_target(args):
     if not args.align:
         extra_string = '_noEA'
@@ -170,9 +32,7 @@ def train_target(args):
     X_src, y_src, X_tar, y_tar = read_mi_combine_tar(args)
     print('X_src, y_src, X_tar, y_tar:', X_src.shape, y_src.shape, X_tar.shape, y_tar.shape)
     dset_loaders = data_loader(X_src, y_src, X_tar, y_tar, args)
-
-    # args.sample_rate = 6  # to set EEGNet kernal as 3, should be modified
-
+    # args.sample_rate = 64  # to set EEGNet kernal as 32
     netF, netC = backbone_net(args, return_type='xy')
     if args.data_env != 'local':
         netF, netC = netF.cuda(), netC.cuda()
@@ -228,7 +88,7 @@ def train_target(args):
 
             if iter_num % interval_iter == 0 or iter_num == max_iter:
                 base_network.eval()
-
+                # "Target" data have been aligned by EA
                 if args.balanced:
                     acc_t_te, _ = cal_acc_comb(dset_loaders["Target"], base_network, args=args)
                     if args.align:
@@ -252,8 +112,10 @@ def train_target(args):
                    './runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(
                        args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt')
 
-    base_network.eval()
 
+    base_network.eval()
+    # "Target-Online" data haven't been aligned by EA
+    # cal_score_online function used incremental EA for the "Target-Online" data to test the model
     score = cal_score_online(dset_loaders["Target-Online"], base_network, args=args)
     if args.balanced:
         if args.align:
@@ -265,43 +127,26 @@ def train_target(args):
             log_str = 'Task: {}, Online IEA AUC = {:.2f}%'.format(args.task_str, score)
         else:
             log_str = 'Task: {}, Online Acc = {:.2f}%'.format(args.task_str, score)
-    
+
     args.log.record(log_str)
     print(log_str)
 
-    print('executing TTA...')
+    print('executing source model...')
 
-    """
-    # assuming two classes
-    assert args.class_num == 2, 'multiclass not implemented!'
-    weight = base_network[1].fc.weight.detach()
-    weight_norm0 = weight[0] / torch.norm(weight, dim=1)[0]
-    weight_norm1 = weight[1] / torch.norm(weight, dim=1)[1]
-    weights = [[weight_norm0.cpu()], [weight_norm1.cpu()]]
-    """
-    # in the original code of TTime, T3A only considers the binary classification, now we extend it to multi-class scenario 
-    weights = []
-    weight = base_network[1].fc.weight.detach()
-    for w_id in range(weight.shape[0]):
-        weight_norm = weight[w_id] / torch.norm(weight, dim=1)[0]
-        weights.append([weight_norm.cpu()])
-    
     if args.balanced:
-        acc_t_te, (y_pred, y_true) = T3A(dset_loaders["Target-Online"], base_network, args=args, balanced=True, weights=weights)
-        log_str = 'Task: {}, TTA Acc = {:.2f}%'.format(args.task_str, acc_t_te)
+        acc_t_te, (y_pred, predict, y_true) = cal_score_online_source(dset_loaders["Target-Online"], base_network, args=args)
+        log_str = 'Task: {}, Source Acc = {:.2f}%'.format(args.task_str, acc_t_te)
     else:
-        acc_t_te, (y_pred, y_true) = T3A(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False, weights=weights)
-        log_str = 'Task: {}, TTA AUC = {:.2f}%'.format(args.task_str, acc_t_te)
+        acc_t_te, (y_pred, predict, y_true) = cal_score_online_source(dset_loaders["Target-Online-Imbalanced"], base_network, args=args)
+        log_str = 'Task: {}, Source AUC = {:.2f}%'.format(args.task_str, acc_t_te)
     args.log.record(log_str)
     print(log_str)
 
     if args.balanced:
         print('Test Acc = {:.2f}%'.format(acc_t_te))
+
     else:
         print('Test AUC = {:.2f}%'.format(acc_t_te))
-
-    torch.save(base_network.state_dict(), './runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(
-        args.SEED) + extra_string + '_adapted_m'+ str(args.momentum_param) + '.ckpt')
 
     # save the predictions for ensemble
     file_path = os.path.join(str(args.result_dir), str(args.data_name) + '_' + str(args.method) + '_seed_' + str(args.SEED) + "_pred.csv")
@@ -311,20 +156,21 @@ def train_target(args):
     else:
         df_existing = pd.DataFrame()
     # Convert torch.tensor to np.array and reshape
-    y_pred = np.array(y_pred).reshape(-1, 1)  # Convert torch.tensor to np.array and reshape
-    y_true = np.array(y_true).reshape(-1, 1)  # Convert torch.tensor to np.array and reshape
+    predict = predict.numpy().reshape(-1, 1)  # Convert torch.tensor to np.array and reshape
+    y_true = np.array(y_true).reshape(-1, 1)  # Convert list to np.array and reshape
     # Combine y_pred, predict, and y_true into a single array
-    combined_data = np.hstack((y_pred, y_true))
+    combined_data = np.hstack((y_pred, predict, y_true))
     # Generate column names
+    class_columns = [f'Subject_{args.idt}_Class_{i}' for i in range(args.class_num)]
     additional_columns = [f'Subject_{args.idt}_predict', f'Subject_{args.idt}_true']
-    header = additional_columns
+    header = class_columns + additional_columns
     # Create a new DataFrame with the combined data and the header
     df_new = pd.DataFrame(combined_data, columns=header)
     # Combine existing data with new columns
     df_combined = pd.concat([df_existing, df_new], axis=1)
     # Save the combined DataFrame to CSV
     df_combined.to_csv(file_path, index=False)
-
+    
     gc.collect()
     if args.data_env != 'local':
         torch.cuda.empty_cache()
@@ -411,6 +257,7 @@ if __name__ == '__main__':
         # whether to use pretrained model
         # if source models have not been trained, set use_pretrained_model to False to train them
         # alternatively, run dnn.py to train source models, in seperating the steps
+        # use_pretrained_model = True
         if use_pretrained_model:
             # no training
             max_epoch = 0
@@ -433,6 +280,9 @@ if __name__ == '__main__':
         # whether to use EA
         align = align
 
+        # temperature rescaling, for test entropy calculation
+        t = 2
+
         # whether to test balanced or imbalanced (2:1) target subject
         balanced = True
 
@@ -447,14 +297,13 @@ if __name__ == '__main__':
         if momentum:
             print('momentum: {}, momentum_param: {}'.format(momentum, momentum_param))
 
-        args = argparse.Namespace(feature_deep_dim=feature_deep_dim, align=align, lr=lr, max_epoch=max_epoch,
+        args = argparse.Namespace(feature_deep_dim=feature_deep_dim, align=align, lr=lr, t=t, max_epoch=max_epoch,
                                   trial_num=trial_num, time_sample_num=time_sample_num, sample_rate=sample_rate,
                                   N=N, chn=chn, class_num=class_num, stride=stride, steps=steps, calc_time=calc_time,
                                   paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced,
                                   data_path_MI = data_path_MI,finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param)
 
-
-        args.method = 'T3A'
+        args.method = 'source'
         args.backbone = backbone
 
         args.epoch = epoch
