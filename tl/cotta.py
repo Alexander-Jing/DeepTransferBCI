@@ -428,7 +428,7 @@ if __name__ == '__main__':
         args.epoch = epoch
         # train batch size
         args.batch_size = batch_size
-        args.lr_online = 0.0001  # learning rate for online adaptation
+        args.lr_online = 0.001  # learning rate for online adaptation
 
         # path for saving the offline models
         args.runs_path = './runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)

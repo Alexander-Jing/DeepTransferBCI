@@ -23,8 +23,8 @@ import sys
 
 # This is the implementation of T3A from paper:
 # Iwasawa Y, Matsuo Y. Test-time classifier adjustment module for model-agnostic domain generalization[J]. Advances in Neural Information Processing Systems, 2021, 34: 2427-2440.
-# @Time    : 2025/04/13
-# @Author  : Yitao Jing
+# @Time    : 2023/07/07
+# @Author  : Siyang Li
 # @File    : t3a.py
 # from github https://github.com/sylyoung/DeepTransferEEG/tree/main
 
@@ -39,6 +39,12 @@ def T3A(loader, model, args, balanced=True, weights=None):
     # class prototypes, initialized with FC layer weights
     protos = weights
 
+    """
+    a = np.array([-1])
+    b = np.array([-1])
+    # entropy records
+    ent_records = [a, b]
+    """
     ent_records = []
     # extend it to the multi-class scenario 
     for cls_idx in range(args.class_num):
@@ -46,7 +52,7 @@ def T3A(loader, model, args, balanced=True, weights=None):
         ent_records.append(_a)
 
     # size of support set
-    M = 64
+    M = 10
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
@@ -97,24 +103,18 @@ def T3A(loader, model, args, balanced=True, weights=None):
         ent = Entropy(softmax_out)
         ents.append(np.round(ent.item(), 4))
 
-        _, y_hat = torch.max(softmax_out, 1)
-        id_ = int(y_hat)
-        
-        # update the support set
-        # in the previous code in TTime, the author make the prediction first then update the support set, which not in accord with the paper and code of T3A 
-        if len(ent_records[id_]) < M:
-            ent_records[id_] = np.append(ent_records[id_], np.round(ent.cpu().item(), 4))
-            protos[id_].append(features_test.reshape(feature_dim).cpu())
-        else:  # remove highest entropy term
-            ind = np.argmax(ent_records[id_])
-            max_ent = np.max(ent_records[id_])
-            if ent < max_ent:
-                ent_records[id_] = np.delete(ent_records[id_], ind)
-                del protos[id_][ind]
-                ent_records[id_] = np.append(ent_records[id_], np.round(ent.cpu().item(), 4))
-                protos[id_].append(features_test.reshape(feature_dim).cpu())
-
         # calculate center of each class in the support set
+        """
+        if len(protos[0]) == 1:
+            prototype0 = protos[0][0]
+        else:
+            prototype0 = torch.mean(torch.stack(protos[0]), dim=0)
+        if len(protos[1]) == 1:
+            prototype1 = protos[1][0]
+        else:
+            prototype1 = torch.mean(torch.stack(protos[1]), dim=0)
+        curr_protos = torch.stack((prototype0, prototype1))
+        """
         curr_protos_list = []
         for cls_idx in range(args.class_num):
             if len(protos[cls_idx]) == 1:
@@ -134,6 +134,21 @@ def T3A(loader, model, args, balanced=True, weights=None):
         labels = labels.float().cpu()
         _, predict = torch.max(outputs, 1)
         pred = torch.squeeze(predict).float()
+
+        id_ = int(pred)
+        
+        # update the support set
+        if len(ent_records[id_]) < M:
+            ent_records[id_] = np.append(ent_records[id_], np.round(ent.cpu().item(), 4))
+            protos[id_].append(features_test.reshape(feature_dim).cpu())
+        else:  # remove highest entropy term
+            ind = np.argmax(ent_records[id_])
+            max_ent = np.max(ent_records[id_])
+            if ent < max_ent:
+                ent_records[id_] = np.delete(ent_records[id_], ind)
+                del protos[id_][ind]
+                ent_records[id_] = np.append(ent_records[id_], np.round(ent.cpu().item(), 4))
+                protos[id_].append(features_test.reshape(feature_dim).cpu())
 
         y_pred.append(pred.item())
         y_true.append(labels.item())
@@ -166,17 +181,17 @@ def train_target(args):
     if args.max_epoch == 0:
         if args.align:
             if args.data_env != 'local':
-                base_network.load_state_dict(torch.load(args.param_runs + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load('./runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt'))
             else:
-                base_network.load_state_dict(torch.load(args.param_runs + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load('./runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt', map_location=torch.device('cpu')))
         else:
             if args.data_env != 'local':
-                base_network.load_state_dict(torch.load(args.param_runs + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load('./runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt'))
             else:
-                base_network.load_state_dict(torch.load(args.param_runs + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load('./runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt', map_location=torch.device('cpu')))
     else:
         criterion = nn.CrossEntropyLoss()
@@ -232,9 +247,9 @@ def train_target(args):
                 base_network.train()
 
         print('saving model...')
-        makedir_if_not_exist(os.path.join(args.param_runs, str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)))
+        makedir_if_not_exist(os.path.join('./runs/', str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)))
         torch.save(base_network.state_dict(),
-                   args.param_runs + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(
+                   './runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(
                        args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt')
 
     base_network.eval()
@@ -256,6 +271,14 @@ def train_target(args):
 
     print('executing TTA...')
 
+    """
+    # assuming two classes
+    assert args.class_num == 2, 'multiclass not implemented!'
+    weight = base_network[1].fc.weight.detach()
+    weight_norm0 = weight[0] / torch.norm(weight, dim=1)[0]
+    weight_norm1 = weight[1] / torch.norm(weight, dim=1)[1]
+    weights = [[weight_norm0.cpu()], [weight_norm1.cpu()]]
+    """
     # in the original code of TTime repo, T3A only considers the binary classification, now we extend it to multi-class scenario 
     weights = []
     weight = base_network[1].fc.weight.detach()
@@ -277,7 +300,7 @@ def train_target(args):
     else:
         print('Test AUC = {:.2f}%'.format(acc_t_te))
 
-    torch.save(base_network.state_dict(), args.param_runs + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(
+    torch.save(base_network.state_dict(), './runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(
         args.SEED) + extra_string + '_adapted_m'+ str(args.momentum_param) + '.ckpt')
 
     # save the predictions for ensemble
@@ -329,7 +352,6 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate in offline and online training')
     parser.add_argument('--epoch', type=int, default=100, help='epoches in offline and online training')
     parser.add_argument('--backbone', type=str, default='EEGNet', help='backbone of the model')
-    parser.add_argument('--param_runs', type=str, default='./runs/', help='folder for saving the run paramters')
 
     args = parser.parse_args()
 
@@ -349,7 +371,6 @@ if __name__ == '__main__':
     lr = args.lr
     epoch = args.epoch
     backbone = args.backbone
-    param_runs = args.param_runs
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -435,15 +456,14 @@ if __name__ == '__main__':
 
         args.method = 'T3A'
         args.backbone = backbone
-        args.M = 32  # the hyperparameter M, indicating the M-th largest entropy of the support set
 
         args.epoch = epoch
         # train batch size
         args.batch_size = batch_size
 
         # path for saving the offline models
-        args.param_runs = param_runs
-        args.runs_path = str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)
+        args.runs_path = './runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)
+
         # GPU device id
         try:
             device_id = gpu_idx

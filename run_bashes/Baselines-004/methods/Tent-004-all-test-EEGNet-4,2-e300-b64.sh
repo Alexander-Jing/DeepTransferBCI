@@ -17,7 +17,7 @@ python3 $progarm_path \
   --data_save "True" \
   --data_path "./data/" \
   --data_path_MI "None" \
-  --log_path "./logs/Baselines-004-test-e300-b64/tent-BNCI2014_004-test-EEGNet-4,2-e300-b64/" \
+  --log_path "./logs/Baselines-004-test-e300-b64/tent-BNCI2014_004-test-EEGNet-4,2-e300-b64-lr_online0.0001/" \
   --use_pretrained_model "True" \
   --finetune "False" \
   --momentum "False" \
@@ -27,4 +27,5 @@ python3 $progarm_path \
   --batch_size "64" \
   --lr "0.001"  \
   --epoch "300"  \
-  --backbone "EEGNet-4,2"
+  --backbone "EEGNet-4,2" \
+  --lr_online "0.0001"

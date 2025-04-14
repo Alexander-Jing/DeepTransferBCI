@@ -165,7 +165,7 @@
             "name": "Python: TTA-BCNI2014001-4-test",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/sar.py",
+            "program": "${workspaceFolder}/tl/t3a_1.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -173,7 +173,7 @@
                 "--data_save", "True",
                 "--data_path", "./data/",
                 "--data_path_MI", "None",
-                "--log_path", "./logs/Baselines-001-test-e300-b64/sar-BNCI2014001-test-EEGNet-4,2-e300-b64/",
+                "--log_path", "./logs/Baselines-001-test-e300-b64-debugs/t3a-BNCI2014001-test-EEGNet-4,2-e300-b64/",
                 "--use_pretrained_model", "True",
                 "--finetune", "False",
                 "--momentum", "False",
@@ -184,6 +184,7 @@
                 "--lr", "0.001",
                 "--epoch", "300",
                 "--backbone", "EEGNet-4,2",
+                "--param_runs", "./runs_debug/",
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"

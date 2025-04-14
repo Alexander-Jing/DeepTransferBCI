@@ -6,7 +6,7 @@ workspace_folder="/home/jyt/workspace/DeepTransferBCI"
 cd $workspace_folder
 
 # Define the program path
-progarm_path="tl/source.py"
+progarm_path="tl/ttime_debug_m_cls.py"
 
 # Set the PYTHONPATH environment variable
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
@@ -17,12 +17,12 @@ python3 $progarm_path \
   --data_save "True" \
   --data_path "./data/" \
   --data_path_MI "None" \
-  --log_path "./logs/Baselines-004-test-e300-b64/Source-BNCI2014_004-test-EEGNet-4,2-e300-b64/" \
-  --use_pretrained_model "True" \
+  --log_path "./logs/Baselines-004-test-e300-b64/ttime-BNCI2014_004-test-EEGNet4,2-e300-b64/" \
+  --use_pretrained_model "False" \
   --finetune "False" \
   --momentum "False" \
   --momentum_param "0.5" \
-  --gpu_idx "0" \
+  --gpu_idx "1" \
   --align "True" \
   --batch_size "64" \
   --lr "0.001"  \

@@ -97,7 +97,7 @@ def Tent_func(loader, model, args, balanced=True):
                     # Tent mode initialize
                     model = configure_model(model)
                     params, param_names = collect_params(model)  # collect the Collect the affine scale + shift parameters from batch norms of the model
-                    optimizer = torch.optim.Adam(params, lr=args.lr)  # set the optimizer for the affine scale + shift parameters
+                    optimizer = torch.optim.Adam(params, lr=args.lr_online)  # set the optimizer for the affine scale + shift parameters
                     tented_model = Tent(model, optimizer)  # update the model
 
                 if args.align:
@@ -318,6 +318,7 @@ if __name__ == '__main__':
     parser.add_argument('--align', type=str2bool, default=True, help='use EA alignment and IEA alignment')
     parser.add_argument('--batch_size', type=int, default=32, help='batch size in offline training')
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate in offline and online training')
+    parser.add_argument('--lr_online', type=float, default=0.001, help='learning rate in online adaptation')
     parser.add_argument('--epoch', type=int, default=100, help='epoches in offline and online training')
     parser.add_argument('--backbone', type=str, default='EEGNet', help='backbone of the model')
 
@@ -339,6 +340,7 @@ if __name__ == '__main__':
     lr = args.lr
     epoch = args.epoch
     backbone = args.backbone
+    lr_online = args.lr_online
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -427,6 +429,7 @@ if __name__ == '__main__':
         args.epoch = epoch
         # train batch size
         args.batch_size = batch_size
+        args.lr_online = lr_online  # learning rate for online adaptation
 
         # path for saving the offline models
         args.runs_path = './runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)
