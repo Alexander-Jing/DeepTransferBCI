@@ -41,17 +41,17 @@ def train_target(args):
     if args.max_epoch == 0:
         if args.align:
             if args.data_env != 'local':
-                base_network.load_state_dict(torch.load('./runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load(str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt'))
             else:
-                base_network.load_state_dict(torch.load('./runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load(str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt', map_location=torch.device('cpu')))
         else:
             if args.data_env != 'local':
-                base_network.load_state_dict(torch.load('./runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load(str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt'))
             else:
-                base_network.load_state_dict(torch.load('./runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load(str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt', map_location=torch.device('cpu')))
     else:
         criterion = nn.CrossEntropyLoss()
@@ -107,9 +107,9 @@ def train_target(args):
                 base_network.train()
 
         print('saving model...')
-        makedir_if_not_exist(os.path.join('./runs/', str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)))
+        makedir_if_not_exist(os.path.join(str(args.param_runs), str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)))
         torch.save(base_network.state_dict(),
-                   './runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(
+                   str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(
                        args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt')
 
 
@@ -195,9 +195,12 @@ if __name__ == '__main__':
     parser.add_argument('--momentum_param', type=float, default=0.5, help='the value for momentum updating')
     parser.add_argument('--align', type=str2bool, default=True, help='use EA alignment and IEA alignment')
     parser.add_argument('--batch_size', type=int, default=32, help='batch size in offline training')
+    parser.add_argument('--batch_size_online', type=int, default=8, help='batch size in online adaptation')
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate in offline and online training')
+    parser.add_argument('--lr_online', type=float, default=0.001, help='learning rate in online adaptation')
     parser.add_argument('--epoch', type=int, default=100, help='epoches in offline and online training')
     parser.add_argument('--backbone', type=str, default='EEGNet', help='backbone of the model')
+    parser.add_argument('--param_runs', type=str, default='./runs/', help='folder for saving the run paramters')
 
     args = parser.parse_args()
 
@@ -214,9 +217,12 @@ if __name__ == '__main__':
     momentum_param = args.momentum_param
     align = args.align
     batch_size = args.batch_size
+    batch_size_online = args.batch_size_online
     lr = args.lr
     epoch = args.epoch
     backbone = args.backbone
+    param_runs = args.param_runs
+    lr_online = args.lr_online
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -225,8 +231,10 @@ if __name__ == '__main__':
     print('log_path: {}, type: {}'.format(log_path, type(log_path)))
     print('gpu_idx: {}, type: {}'.format(gpu_idx, type(gpu_idx)))
 
-    data_name_list = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4', 'MI-hand_elbow','MI-elbow_rest', 'MI-hand_rest', 'BNCI2014001-4-all', 'BNCI2014001-4-test', 'BNCI2014001-4-train', 'BNCI2014_004-train', 'BNCI2014_004-test']
-
+    data_name_list = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4', 'MI-hand_elbow','MI-elbow_rest', 'MI-hand_rest', 
+                      'BNCI2014001-4-all', 'BNCI2014001-4-test', 'BNCI2014001-4-train', 'BNCI2014_004-train', 'BNCI2014_004-test',
+                      'WBCIC-SHU-3C']
+    
     dct = pd.DataFrame(columns=['dataset', 'avg', 'std', 's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13'])
 
     if data_name in data_name_list:
@@ -244,6 +252,7 @@ if __name__ == '__main__':
             if data_name == 'BNCI2014001-4-test': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 4, 1001, 250, 288, 496
             if data_name == 'BNCI2014_004-train': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 3, 2, 1126, 250, 400, 560
             if data_name == 'BNCI2014_004-test': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 3, 2, 1126, 250, 400, 560
+            if data_name == 'WBCIC-SHU-3C': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 11, 58, 3, 1000, 250, 900, 496
         if backbone == 'EEGNet-4,2':
             if data_name == 'BNCI2014001-4-train': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 4, 1001, 250, 288, 248
             if data_name == 'MI-hand_elbow': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
@@ -253,7 +262,8 @@ if __name__ == '__main__':
             if data_name == 'BNCI2014001-4-test': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 4, 1001, 250, 288, 248
             if data_name == 'BNCI2014_004-train': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 3, 2, 1126, 250, 400, 280
             if data_name == 'BNCI2014_004-test': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 3, 2, 1126, 250, 400, 280
-
+            if data_name == 'WBCIC-SHU-3C': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 11, 58, 3, 1000, 250, 900, 248
+        
         # whether to use pretrained model
         # if source models have not been trained, set use_pretrained_model to False to train them
         # alternatively, run dnn.py to train source models, in seperating the steps
@@ -269,7 +279,7 @@ if __name__ == '__main__':
         lr = lr
 
         # test batch size
-        test_batch = 8
+        test_batch = batch_size_online
 
         # update step
         steps = 1
@@ -309,9 +319,11 @@ if __name__ == '__main__':
         args.epoch = epoch
         # train batch size
         args.batch_size = batch_size
+        args.lr_online = lr_online  # learning rate for online adaptation
 
         # path for saving the offline models
-        args.runs_path = './runs/' + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)
+        args.param_runs = param_runs
+        args.runs_path = str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)
 
         # GPU device id
         try:

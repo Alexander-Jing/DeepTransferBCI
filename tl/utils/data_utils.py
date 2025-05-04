@@ -190,7 +190,41 @@ def traintest_split_cross_subject_meta(dataset, X, y, num_subjects, test_subject
         # Print the shape of the training and test sets for verification
         print(f'Test subject s{test_subject_id}')
         print('Training/Test split:', train_x.shape, test_x.shape)
+    
+    if dataset=='WBCIC-SHU-3C':
+        # We apply the leave-one-subject-out method, using all data of the target subject and the source subjects
+        train_x = None
+        train_y = None
 
+        inds = [900, 900, 900, 900, 900, 900, 900, 900, 900, 899, 900]
+        # form the testing set
+        test_x = X[int(np.sum(inds[:test_subject_id])):int(np.sum(inds[:test_subject_id + 1])), :, :]
+        test_y = y[int(np.sum(inds[:test_subject_id])):int(np.sum(inds[:test_subject_id + 1]))]
+        # then form the training set
+        mask = np.ones(len(X), dtype=bool)
+        mask[int(np.sum(inds[:test_subject_id])):int(np.sum(inds[:test_subject_id + 1]))] = False
+        X_source = X[mask, :, :]
+        y_source = y[mask]  # delete the data from target subject
+        inds_train = np.delete(inds, test_subject_id)
+        for i in range(num_subjects-1):
+            if train_x is None:
+                train_x = X_source[int(np.sum(inds_train[:i])):int(np.sum(inds_train[:i + 1])), :, :]
+                train_y = y_source[int(np.sum(inds_train[:i])):int(np.sum(inds_train[:i + 1]))]
+            else:
+                train_x = np.concatenate((train_x, X_source[int(np.sum(inds_train[:i])):int(np.sum(inds_train[:i + 1])), :, :]), axis=0)
+                train_y = np.concatenate((train_y, y_source[int(np.sum(inds_train[:i])):int(np.sum(inds_train[:i + 1]))]), axis=0)
+
+        # for debug
+        """
+        test_x_0 = test_x[0,:,:]
+        test_x_514 = test_x[514,:,:]
+        test_x_899 = test_x[898,:,:]
+
+        train_x_0 = train_x[0,:,:]
+        train_x_5140 = train_x[5140,:,:]
+        train_x_8998 = train_x[8998,:,:]
+        train_y_100 = train_y[5140:5240]
+        """
     return train_x, train_y, test_x, test_y
 
 def traintest_split_domain_classifier(dataset, X, y, num_subjects, test_subject_id):

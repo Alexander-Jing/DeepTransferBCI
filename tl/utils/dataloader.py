@@ -27,7 +27,7 @@ def data_process(args):
         y = np.load('./data/' + 'BNCI2014_004' + '/labels.npy')
         meta = pd.read_csv('./data/' + 'BNCI2014_004' + '/meta.csv')
         print(X.shape, y.shape)
-    elif dataset != 'MI-hand_elbow' and dataset != 'MI-elbow_rest' and dataset != 'MI-hand_rest':
+    elif dataset not in ['MI-hand_elbow', 'MI-elbow_rest', 'MI-hand_rest', 'WBCIC-SHU-3C']:  # other datasets that use the moabb
         X = np.load('./data/' + dataset + '/X.npy')
         y = np.load('./data/' + dataset + '/labels.npy')
         meta = pd.read_csv('./data/' + dataset + '/meta.csv')
@@ -257,6 +257,54 @@ def data_process(args):
             else:
                 X = np.concatenate((X, sub_task_data), axis=0)
                 y = np.concatenate((y, sub_task_label), axis=0)
+    
+    elif dataset == 'WBCIC-SHU-3C':
+        # the 3 class multi-day dataset contains MI of left-right hand and foot
+        # dataset paper: 
+        # Yang B, Rong F, Xie Y, et al. A multi-day and high-quality EEG dataset for motor imagery brain-computer interface[J]. Scientific Data, 2025, 12(1): 488.
+        # three classes: left hand, right hand and foot
+        paradigm = 'MI'
+        num_subjects = 11
+        sample_rate = 250
+        ch_num = 58
+        sessions = 3
+        X = None
+        y = None
+        meta = None  # we do not use the meta information in this dataset 
+        _subject_trialnum = []
+
+        folder_path = args.data_path_MI
+        for num in range(num_subjects):
+            sub_task_data = None
+            sub_task_label = None
+
+            sub_file = f'{(num+1):03}'
+            for session_idx in range(sessions):
+                _sub_path = os.path.join(folder_path, 'Sub-' + sub_file, 'dataset2_processeddata_' + 'Sub-' + sub_file + '_sess-0' + str(session_idx+1) + '_task-MI_eeg.mat')
+                sub_mat = sio.loadmat(_sub_path) # example: dataset2_processeddata_Sub-008_sess-01_task-MI_eeg.mat
+                # each subject's MI data contains 3*300 trials (3 sessions on different days, and each session contains 300 trials with 100 trials for each MI class), 
+                # each trial contains 4s data with 58 channels and 250 sampling rate
+                _task_data = np.transpose(sub_mat['data'], (2,0,1))  # the original data [channels × time × trials], transpose to [trials × channels × time]
+                _task_label = sub_mat['labels'].reshape(-1, 1)
+                # save the data for each subject
+                if sub_task_data is None:
+                    sub_task_data = _task_data
+                    sub_task_label = _task_label
+                else:
+                    sub_task_data = np.concatenate((sub_task_data, _task_data), axis=0)
+                    sub_task_label = np.concatenate((sub_task_label, _task_label), axis=0)
+
+            _subject_trialnum.append(sub_task_data.shape[0])
+
+            # concatenate all subjects' data
+            if X is None:
+                X = sub_task_data
+                y = sub_task_label
+            else:
+                X = np.concatenate((X, sub_task_data), axis=0)  
+                y = np.concatenate((y, sub_task_label), axis=0)
+        
+        print(_subject_trialnum)
 
     le = preprocessing.LabelEncoder()
     y = le.fit_transform(y)
@@ -367,7 +415,7 @@ def read_mi_combine_tar(args):
     
     if args.data in ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4']:
         src_data, src_label, tar_data, tar_label = traintest_split_cross_subject(args.data, X, y, num_subjects, args.idt)
-    elif args.data in ['BNCI2014001-4-all', 'BNCI2014_004-train', 'BNCI2014001-4-test', 'Schirrmeister2017','BNCI2014001-4-train','BNCI2014_004-test']:
+    elif args.data in ['BNCI2014001-4-all', 'BNCI2014_004-train', 'BNCI2014001-4-test', 'Schirrmeister2017','BNCI2014001-4-train','BNCI2014_004-test', 'WBCIC-SHU-3C']:
         src_data, src_label, tar_data, tar_label = traintest_split_cross_subject_meta(args.data, X, y, num_subjects, args.idt, meta)
 
     return src_data, src_label, tar_data, tar_label

@@ -112,7 +112,8 @@ def op_copy(optimizer):
 
 def fix_random_seed(SEED):
     tr.manual_seed(SEED)
-    tr.cuda.manual_seed(SEED)
+    # tr.cuda.manual_seed(SEED)
+    tr.cuda.manual_seed_all(SEED)
     np.random.seed(SEED)
     random.seed(SEED)
 
@@ -505,6 +506,38 @@ def data_alignment(X, num_subjects, args):
                 # id_ = int(inds_test[args.idt])  # for debug
                 # _X = X[0:int(inds_test[args.idt]), :, :]  # for debug
                 tmp_x = EA(X[0:int(inds_test[args.idt]), :, :])
+            out.append(tmp_x)
+        X = np.concatenate(out, axis=0)
+        print('after EA:', X.shape)
+    elif args.data == "WBCIC-SHU-3C":
+        # upsampling for unequal distributions across subjects, i.e., each subject is upsampled to different num of trials
+        print('before EA:', X.shape)
+        out = []
+        inds = [900, 900, 900, 900, 900, 900, 900, 900, 900, 899, 900]
+        if len(X) > 900*2:  # if it is training set
+            inds = np.delete(inds, args.idt)
+        for i in range(num_subjects):
+            if len(X) > 900*2:  # if it is training set
+                """
+                _strat_id = np.sum(inds[:i])  # for debug
+                _end_id = np.sum(inds[:i + 1])  # for debug
+                _X = X[np.sum(inds[:i]):np.sum(inds[:i + 1]), :, :]  # for debug
+                _X_0 = _X[0,:,:]
+                _X_514 = _X[514,:,:]
+                _X_898 = _X[898,:,:]  # for debug
+                """
+
+                tmp_x = EA(X[np.sum(inds[:i]):np.sum(inds[:i + 1]), :, :])
+            else:  # if it is test set in target 
+                """
+                id_ = int(inds[args.idt])  # for debug
+                _X = X[0:int(inds[args.idt]), :, :]  # for debug
+                _X_0 = _X[0,:,:]
+                _X_514 = _X[514,:,:]
+                _X_898 = _X[898,:,:]  # for debug
+                """
+
+                tmp_x = EA(X[0:int(inds[args.idt]), :, :])
             out.append(tmp_x)
         X = np.concatenate(out, axis=0)
         print('after EA:', X.shape)
