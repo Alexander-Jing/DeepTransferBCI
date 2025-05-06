@@ -115,7 +115,7 @@
             "name": "Python: TTIME-WBCIC-SHU-3C-debugs-process",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/ttime_debug_m_cls_process_3.py",
+            "program": "${workspaceFolder}/tl/ttime_debug_m_cls_process_4.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -123,7 +123,7 @@
                 "--data_save", "True",
                 "--data_path", "./data/",
                 "--data_path_MI", "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/",
-                "--log_path", "./logs/deubgs-WBCIC-SHU-3C-process/ttime-debug-WBCIC-SHU-3C-momentum-cls-1-test-EEGNet-4,2-5/",
+                "--log_path", "./logs/deubgs-WBCIC-SHU-3C-process/ttime-debug-WBCIC-SHU-3C-momentum-cls-1-test-EEGNet-4,2-6/",
                 "--use_pretrained_model", "True",
                 "--finetune", "False",
                 "--momentum", "False",
@@ -134,7 +134,7 @@
                 "--batch_size_online", "8",
                 "--lr", "0.001",
                 "--lr_online", "0.0001",
-                "--epoch", "10",
+                "--epoch", "300",
                 "--backbone", "EEGNet-4,2",
                 "--param_runs", "./runs_debug/",
             ],

@@ -6,19 +6,19 @@ workspace_folder="/home/jyt/workspace/DeepTransferBCI"
 cd $workspace_folder
 
 # Define the program path
-progarm_path="tl/ttime_debug_m_cls_process.py"
+progarm_path="tl/ttime_debug_m_cls_process_4.py"
 
 # Set the PYTHONPATH environment variable
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
 # Execute the Python script with the specified arguments
 python3 $progarm_path \
-  --dataset_name "BNCI2014_004-test" \
+  --dataset_name "WBCIC-SHU-3C" \
   --data_save "True" \
   --data_path "./data/" \
-  --data_path_MI "None" \
-  --log_path "./logs/Baselines-004-test-e300-b64/ttime-BNCI2014_004-test-EEGNet4,2-e300-b64/" \
-  --use_pretrained_model "False" \
+  --data_path_MI "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/" \
+  --log_path "./logs/deubgs-WBCIC-SHU-3C-process/ttime-debug-WBCIC-SHU-3C-momentum-cls-1-test-EEGNet-4,2-7/" \
+  --use_pretrained_model "True" \
   --finetune "False" \
   --momentum "False" \
   --momentum_param "0.5" \
@@ -27,7 +27,7 @@ python3 $progarm_path \
   --batch_size "64" \
   --batch_size_online "8" \
   --lr "0.001"  \
-  --lr_online "0.001" \
+  --lr_online "0.0001" \
   --epoch "300"  \
   --backbone "EEGNet-4,2" \
   --param_runs "./runs_debug/"
