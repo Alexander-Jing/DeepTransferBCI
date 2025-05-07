@@ -53,7 +53,7 @@ class EATA(nn.Module):
         else:
             self.model.eval()
             with torch.no_grad():
-                outputs = self.model(x)
+                _, outputs = self.model(x)  # in our model, the output is fea, logits
         return outputs
 
     def reset(self):
@@ -89,7 +89,7 @@ def forward_and_adapt_eata(x, model, optimizer, fishers, e_margin, current_model
     4. the moving average  probability vector over all previous samples
     """
     # forward
-    outputs = model(x)
+    _, outputs = model(x)  # in our model, the output is fea, logits
     # adapt
     entropys = softmax_entropy(outputs)
     # filter unreliable samples

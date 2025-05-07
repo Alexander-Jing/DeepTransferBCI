@@ -17,7 +17,7 @@ python3 $progarm_path \
   --data_save "True" \
   --data_path "./data/" \
   --data_path_MI "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/" \
-  --log_path "./logs/Baselines-WBCIC-SHU-3C-e300-b64-1/source-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/" \
+  --log_path "./logs/Baselines-WBCIC-SHU-3C-e300-b64/source-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/" \
   --use_pretrained_model "True" \
   --finetune "False" \
   --momentum "False" \

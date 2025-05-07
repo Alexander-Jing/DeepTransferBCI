@@ -7,6 +7,8 @@ import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
 import csv
+import copy
+import math
 
 from tl.utils.utils import str2bool
 from utils.network import backbone_net
@@ -15,9 +17,9 @@ from utils.dataloader import read_mi_combine_tar
 from utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist
 from utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
-from models.tent import configure_model, collect_params, Tent
+from utils.loss import Entropy
 from sklearn.metrics import roc_auc_score, accuracy_score
-from models import eata
+from models.eata import EATA, configure_model, collect_params
 
 import gc
 import sys
@@ -30,9 +32,9 @@ import time
 # @File    : eata.py
 # original code from github https://github.com/mr-eggplant/EATA
 
-def Tent_func(loader, model, args, balanced=True):
-    # Tent
-
+def EATA_func(loader, model, args, balanced=True):
+    # EATA
+    
     if balanced == False and args.data_name == 'BNCI2014001-4':
         print('ERROR, imbalanced multi-class not implemented')
         sys.exit(0)
@@ -95,11 +97,11 @@ def Tent_func(loader, model, args, balanced=True):
                 sys.exit(1)
             else:
                 if (i + 1) == args.test_batch:
-                    # Tent mode initialize
+                    # initilize the model parameters
                     model = configure_model(model)
-                    params, param_names = collect_params(model)  # collect the Collect the affine scale + shift parameters from batch norms of the model
-                    optimizer = torch.optim.Adam(params, lr=args.lr)  # set the optimizer for the affine scale + shift parameters
-                    tented_model = Tent(model, optimizer)  # update the model
+                    params, param_names = collect_params(model)
+                    optimizer = torch.optim.SGD(params, lr=args.lr_online, momentum=0.9)
+                    adapt_model = EATA(model, optimizer, steps=args.steps, e_margin=math.log(1000)/2-1, d_margin=0.05)
 
                 if args.align:
                     batch_test = np.copy(data_cum[i - args.test_batch + 1:i + 1])
@@ -115,7 +117,7 @@ def Tent_func(loader, model, args, balanced=True):
                 else:
                     batch_test = torch.from_numpy(batch_test).to(torch.float32)
 
-                outputs = tented_model(batch_test)[-1].reshape(1, -1)
+                outputs = adapt_model(batch_test)[-1].reshape(1, -1)  # only use the last output sample, as the stride is set 1
         else:
             _, outputs = model(sample_test)
 
@@ -133,13 +135,14 @@ def Tent_func(loader, model, args, balanced=True):
         pred = torch.squeeze(predict).float()
         score = accuracy_score(y_true, pred)
         if args.data_name == 'BNCI2014001-4':
-            y_pred = np.array(y_pred).reshape(-1, )  # multiclass
+            y_pred = np.array(y_pred).reshape(-1, args.class_num)  
         else:
-            y_pred = np.array(y_pred).reshape(-1, args.class_num)  # binary
+            y_pred = np.array(y_pred).reshape(-1, args.class_num)  
     else:
         predict = torch.from_numpy(np.array(y_pred)).to(torch.float32).reshape(-1, args.class_num)
-        y_pred = np.array(predict).reshape(-1, args.class_num)  # binary
+        y_pred = np.array(predict).reshape(-1, args.class_num)  
         score = roc_auc_score(y_true, y_pred)
+
     return score * 100, (y_pred, predict, y_true)
 
 
@@ -151,9 +154,7 @@ def train_target(args):
     X_src, y_src, X_tar, y_tar = read_mi_combine_tar(args)
     print('X_src, y_src, X_tar, y_tar:', X_src.shape, y_src.shape, X_tar.shape, y_tar.shape)
     dset_loaders = data_loader(X_src, y_src, X_tar, y_tar, args)
-
-    args.sample_rate = 6  # to set EEGNet kernal as 3, should be modified 
-
+    # args.sample_rate = 64  # to set EEGNet kernal as 32
     netF, netC = backbone_net(args, return_type='xy')
     if args.data_env != 'local':
         netF, netC = netF.cuda(), netC.cuda()
@@ -162,10 +163,17 @@ def train_target(args):
     if args.max_epoch == 0:
         if args.align:
             if args.data_env != 'local':
-                base_network.load_state_dict(torch.load('./runs/' + str(args.data_name) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load(str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt'))
             else:
-                base_network.load_state_dict(torch.load('./runs/' + str(args.data_name) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load(str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                    '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt', map_location=torch.device('cpu')))
+        else:
+            if args.data_env != 'local':
+                base_network.load_state_dict(torch.load(str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                    '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt'))
+            else:
+                base_network.load_state_dict(torch.load(str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt', map_location=torch.device('cpu')))
     else:
         criterion = nn.CrossEntropyLoss()
@@ -202,42 +210,57 @@ def train_target(args):
 
             if iter_num % interval_iter == 0 or iter_num == max_iter:
                 base_network.eval()
-
+                # "Target" data have been aligned by EA
                 if args.balanced:
                     acc_t_te, _ = cal_acc_comb(dset_loaders["Target"], base_network, args=args)
-                    log_str = 'Task: {}, Iter:{}/{}; Offline-EA Acc = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
+                    if args.align:
+                        log_str = 'Task: {}, Iter:{}/{}; Offline-EA Acc = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
+                    else:
+                        log_str = 'Task: {}, Iter:{}/{}; Offline Acc = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
                 else:
                     acc_t_te, _ = cal_auc_comb(dset_loaders["Target-Imbalanced"], base_network, args=args)
-                    log_str = 'Task: {}, Iter:{}/{}; Offline-EA AUC = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
+                    if args.align:
+                        log_str = 'Task: {}, Iter:{}/{}; Offline-EA AUC = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
+                    else:
+                        log_str = 'Task: {}, Iter:{}/{}; Offline AUC = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
                 args.log.record(log_str)
                 print(log_str)
 
                 base_network.train()
 
         print('saving model...')
-        makedir_if_not_exist(os.path.join('./runs/', str(args.data_name)))
+        makedir_if_not_exist(os.path.join(str(args.param_runs), str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)))
         torch.save(base_network.state_dict(),
-                   './runs/' + str(args.data_name) + '/' + str(args.backbone) + '_S' + str(
+                    str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(
                        args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt')
 
-
+    fix_random_seed(args.SEED)  # further fix the seed
     base_network.eval()
-
+    # "Target-Online" data haven't been aligned by EA
+    # cal_score_online function used incremental EA for the "Target-Online" data to test the model
     score = cal_score_online(dset_loaders["Target-Online"], base_network, args=args)
+    
     if args.balanced:
-        log_str = 'Task: {}, Online IEA Acc = {:.2f}%'.format(args.task_str, score)
+        if args.align:
+            log_str = 'Task: {}, Online IEA Acc = {:.2f}%'.format(args.task_str, score)
+        else:
+            log_str = 'Task: {}, Online Acc = {:.2f}%'.format(args.task_str, score)
     else:
-        log_str = 'Task: {}, Online IEA AUC = {:.2f}%'.format(args.task_str, score)
+        if args.align:
+            log_str = 'Task: {}, Online IEA AUC = {:.2f}%'.format(args.task_str, score)
+        else:
+            log_str = 'Task: {}, Online Acc = {:.2f}%'.format(args.task_str, score)
+
     args.log.record(log_str)
     print(log_str)
 
     print('executing TTA...')
 
     if args.balanced:
-        acc_t_te, (y_pred, predict, y_true) = Tent_func(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
+        acc_t_te, (y_pred, predict, y_true) = EATA_func(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
         log_str = 'Task: {}, TTA Acc = {:.2f}%'.format(args.task_str, acc_t_te)
     else:
-        acc_t_te, (y_pred, predict, y_true) = Tent_func(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
+        acc_t_te, (y_pred, predict, y_true) = EATA_func(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
         log_str = 'Task: {}, TTA AUC = {:.2f}%'.format(args.task_str, acc_t_te)
     args.log.record(log_str)
     print(log_str)
@@ -248,8 +271,8 @@ def train_target(args):
     else:
         print('Test AUC = {:.2f}%'.format(acc_t_te))
 
-    torch.save(base_network.state_dict(), './runs/' + str(args.data_name) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(
-        args.SEED) + extra_string + '_adapted' + '.ckpt')
+    torch.save(base_network.state_dict(), str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(
+        args.SEED) + extra_string + '_adapted_m'+ str(args.momentum_param) + '.ckpt')
 
     # save the predictions for ensemble
     file_path = os.path.join(str(args.result_dir), str(args.data_name) + '_' + str(args.method) + '_seed_' + str(args.SEED) + "_pred.csv")
@@ -273,8 +296,7 @@ def train_target(args):
     df_combined = pd.concat([df_existing, df_new], axis=1)
     # Save the combined DataFrame to CSV
     df_combined.to_csv(file_path, index=False)
-
-
+    
     gc.collect()
     if args.data_env != 'local':
         torch.cuda.empty_cache()
@@ -297,6 +319,14 @@ if __name__ == '__main__':
     parser.add_argument('--ft_volume', type=int, default=7*40, help='the amount of data for finetuning in target domain')
     parser.add_argument('--momentum', type=str2bool, default=False, help='whether to use the momentum updating for model parameters')
     parser.add_argument('--momentum_param', type=float, default=0.5, help='the value for momentum updating')
+    parser.add_argument('--align', type=str2bool, default=True, help='use EA alignment and IEA alignment')
+    parser.add_argument('--batch_size', type=int, default=32, help='batch size in offline training')
+    parser.add_argument('--batch_size_online', type=int, default=8, help='batch size in online adaptation')
+    parser.add_argument('--lr', type=float, default=0.001, help='learning rate in offline and online training')
+    parser.add_argument('--lr_online', type=float, default=0.001, help='learning rate in online adaptation')
+    parser.add_argument('--epoch', type=int, default=100, help='epoches in offline and online training')
+    parser.add_argument('--backbone', type=str, default='EEGNet', help='backbone of the model')
+    parser.add_argument('--param_runs', type=str, default='./runs/', help='folder for saving the run paramters')
 
     args = parser.parse_args()
 
@@ -311,6 +341,14 @@ if __name__ == '__main__':
     ft_volume = args.ft_volume
     momentum = args.momentum
     momentum_param = args.momentum_param
+    align = args.align
+    batch_size = args.batch_size
+    batch_size_online = args.batch_size_online
+    lr = args.lr
+    epoch = args.epoch
+    backbone = args.backbone
+    param_runs = args.param_runs
+    lr_online = args.lr_online
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -319,35 +357,55 @@ if __name__ == '__main__':
     print('log_path: {}, type: {}'.format(log_path, type(log_path)))
     print('gpu_idx: {}, type: {}'.format(gpu_idx, type(gpu_idx)))
 
-    data_name_list = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4', 'MI-hand_elbow','MI-elbow_rest', 'MI-hand_rest']
+    data_name_list = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4', 'MI-hand_elbow','MI-elbow_rest', 'MI-hand_rest', 
+                      'BNCI2014001-4-all', 'BNCI2014001-4-test', 'BNCI2014001-4-train', 'BNCI2014_004-train', 'BNCI2014_004-test',
+                      'WBCIC-SHU-3C']
 
     dct = pd.DataFrame(columns=['dataset', 'avg', 'std', 's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13'])
 
     if data_name in data_name_list:
         # N: number of subjects, chn: number of channels
-        if data_name == 'BNCI2014001': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 2, 1001, 250, 144, 248
-        if data_name == 'BNCI2014002': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 14, 15, 2, 2561, 512, 100, 640
-        if data_name == 'BNCI2015001': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 12, 13, 2, 2561, 512, 200, 640
-        if data_name == 'BNCI2014001-4': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 4, 1001, 250, 288, 248
-        if data_name == 'MI-hand_elbow': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
-        if data_name == 'MI-elbow_rest': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
-        if data_name == 'MI-hand_rest': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
-
+        if backbone == 'EEGNet':
+            if data_name == 'BNCI2014001': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 2, 1001, 250, 144, 248
+            if data_name == 'BNCI2014002': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 14, 15, 2, 2561, 512, 100, 640
+            if data_name == 'BNCI2015001': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 12, 13, 2, 2561, 512, 200, 640
+            if data_name == 'BNCI2014001-4': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 4, 1001, 250, 576, 496
+            if data_name == 'BNCI2014001-4-train': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 4, 1001, 250, 288, 496
+            if data_name == 'MI-hand_elbow': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
+            if data_name == 'MI-elbow_rest': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
+            if data_name == 'MI-hand_rest': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
+            if data_name == 'BNCI2014001-4-all': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 4, 1001, 250, 576, 496
+            if data_name == 'BNCI2014001-4-test': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 4, 1001, 250, 288, 496
+            if data_name == 'BNCI2014_004-train': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 3, 2, 1126, 250, 400, 560
+            if data_name == 'BNCI2014_004-test': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 3, 2, 1126, 250, 400, 560
+            if data_name == 'WBCIC-SHU-3C': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 11, 58, 3, 1000, 250, 900, 496
+        if backbone == 'EEGNet-4,2':
+            if data_name == 'BNCI2014001-4-train': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 4, 1001, 250, 288, 248
+            if data_name == 'MI-hand_elbow': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
+            if data_name == 'MI-elbow_rest': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
+            if data_name == 'MI-hand_rest': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 25, 62, 2, 800, 200, 600, 200
+            if data_name == 'BNCI2014001-4-all': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 4, 1001, 250, 576, 248
+            if data_name == 'BNCI2014001-4-test': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 22, 4, 1001, 250, 288, 248
+            if data_name == 'BNCI2014_004-train': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 3, 2, 1126, 250, 400, 280
+            if data_name == 'BNCI2014_004-test': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 3, 2, 1126, 250, 400, 280
+            if data_name == 'WBCIC-SHU-3C': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 11, 58, 3, 1000, 250, 900, 248
+        
         # whether to use pretrained model
         # if source models have not been trained, set use_pretrained_model to False to train them
         # alternatively, run dnn.py to train source models, in seperating the steps
+        # use_pretrained_model = True
         if use_pretrained_model:
             # no training
             max_epoch = 0
         else:
             # training epochs
-            max_epoch = 100
-
+            max_epoch = epoch
+        
         # learning rate
-        lr = 0.0001
+        lr = lr
 
         # test batch size
-        test_batch = 8
+        test_batch = batch_size_online
 
         # update step
         steps = 1
@@ -356,7 +414,10 @@ if __name__ == '__main__':
         stride = 1
 
         # whether to use EA
-        align = True
+        align = align
+
+        # temperature rescaling, for test entropy calculation
+        t = 2
 
         # whether to test balanced or imbalanced (2:1) target subject
         balanced = True
@@ -372,17 +433,23 @@ if __name__ == '__main__':
         if momentum:
             print('momentum: {}, momentum_param: {}'.format(momentum, momentum_param))
 
-        args = argparse.Namespace(feature_deep_dim=feature_deep_dim, align=align, lr=lr, max_epoch=max_epoch,
+        args = argparse.Namespace(feature_deep_dim=feature_deep_dim, align=align, lr=lr, t=t, max_epoch=max_epoch,
                                   trial_num=trial_num, time_sample_num=time_sample_num, sample_rate=sample_rate,
                                   N=N, chn=chn, class_num=class_num, stride=stride, steps=steps, calc_time=calc_time,
-                                  paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced, data_path_MI = data_path_MI,
-                                  finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param)
+                                  paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced,
+                                  data_path_MI = data_path_MI,finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param)
 
-        args.method = 'Tent'
-        args.backbone = 'EEGNet'
+        args.method = 'T-TIME'
+        args.backbone = backbone
 
+        args.epoch = epoch
         # train batch size
-        args.batch_size = 32
+        args.batch_size = batch_size
+        args.lr_online = lr_online  # learning rate for online adaptation
+
+        # path for saving the offline models
+        args.param_runs = param_runs
+        args.runs_path = str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)
 
         # GPU device id
         try:
@@ -394,7 +461,7 @@ if __name__ == '__main__':
         total_acc = []
 
         # update multiple models, independently, from the source models
-        for s in [3, 4, 5]:
+        for s in [1, 2, 3, 4, 5]:
             args.SEED = s
 
             fix_random_seed(args.SEED)
@@ -414,6 +481,7 @@ if __name__ == '__main__':
 
             sub_acc_all = np.zeros(N)
             for idt in range(N):
+                fix_random_seed(args.SEED)  # fix the seed, the seed isn't fixed completely in the original code (this may be related to the python and cuda version)
                 args.idt = idt
                 source_str = 'Except_S' + str(idt)
                 target_str = 'S' + str(idt)

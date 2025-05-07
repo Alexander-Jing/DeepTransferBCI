@@ -112,7 +112,7 @@ def train_target(args):
                    str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(
                        args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt')
 
-
+    fix_random_seed(args.SEED)  # further fix the seed
     base_network.eval()
     # "Target-Online" data haven't been aligned by EA
     # cal_score_online function used incremental EA for the "Target-Online" data to test the model
@@ -355,6 +355,7 @@ if __name__ == '__main__':
 
             sub_acc_all = np.zeros(N)
             for idt in range(N):
+                fix_random_seed(args.SEED)  # fix the seed
                 args.idt = idt
                 source_str = 'Except_S' + str(idt)
                 target_str = 'S' + str(idt)
