@@ -28,4 +28,5 @@ python3 $progarm_path \
   --lr "0.001"  \
   --epoch "300"  \
   --backbone "EEGNet-4,2" \
-  --lr_online "0.0001"
+  --lr_online "0.0001" \
+  --param_runs "./runs_debug/"

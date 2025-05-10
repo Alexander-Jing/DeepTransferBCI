@@ -6,7 +6,7 @@ workspace_folder="/home/jyt/workspace/DeepTransferBCI"
 cd $workspace_folder
 
 # Define the program path
-progarm_path="tl/t3a.py"
+progarm_path="tl/eata.py"
 
 # Set the PYTHONPATH environment variable
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
@@ -17,7 +17,7 @@ python3 $progarm_path \
   --data_save "True" \
   --data_path "./data/" \
   --data_path_MI "None" \
-  --log_path "./logs/Baselines-004-test-e300-b64/t3a-BNCI2014_004-test-EEGNet-4,2-e300-b64/" \
+  --log_path "./logs/Baselines-004-test-e300-b64/eata-BNCI2014_004-test-EEGNet-4,2-e300-b64/" \
   --use_pretrained_model "True" \
   --finetune "False" \
   --momentum "False" \
@@ -28,4 +28,5 @@ python3 $progarm_path \
   --lr "0.001"  \
   --epoch "300"  \
   --backbone "EEGNet-4,2" \
+  --lr_online "0.001" \
   --param_runs "./runs_debug/"

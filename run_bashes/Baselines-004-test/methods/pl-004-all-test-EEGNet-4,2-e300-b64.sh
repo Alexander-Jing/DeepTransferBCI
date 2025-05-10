@@ -26,5 +26,7 @@ python3 $progarm_path \
   --align "True" \
   --batch_size "64" \
   --lr "0.001"  \
+  --lr_online "0.0001" \
   --epoch "300"  \
-  --backbone "EEGNet-4,2"
+  --backbone "EEGNet-4,2" \
+  --param_runs "./runs_debug/"
