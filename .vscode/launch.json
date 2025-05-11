@@ -264,17 +264,18 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--dataset_name", "BNCI2014001-4-all",
-                "--data_save", "True",
+                "--dataset_name", "WBCIC-SHU-3C",
+                "--data_save", "False",
                 "--data_path", "./data/",
                 "--data_path_MI", "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/",
-                "--log_path", "./logs/Baselines-001-all-e300-b64/Source-BNCI2014001-4-all-EEGNet-4,2-e300-b64/",
+                "--log_path", "./logs/Baselines-WBCIC-SHU-3C-e300-b64/ttime-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/",
                 "--use_pretrained_model", "True",
                 "--finetune", "False",
                 "--momentum", "False",
                 "--momentum_param", "0.5",
-                "--visualfile_csv", "BNCI2014001-4-all_source_seed_1_pred.csv",
-                "--visualfile_trial", "288",
+                "--visualfile_csv", "None", //"WBCIC-SHU-3C_Tent_seed_1_pred.csv",
+                "--visualfile_trial", "300",
+                "--visual_ensamble", "True",
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
