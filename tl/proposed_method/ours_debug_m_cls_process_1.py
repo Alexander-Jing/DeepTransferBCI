@@ -1,9 +1,4 @@
 # -*- coding: utf-8 -*-
-# @Time    : 2023/01/11
-# @Author  : Siyang Li
-# @File    : shot.py
-import csv
-
 import numpy as np
 import argparse
 import os
@@ -11,103 +6,159 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
-from scipy.spatial.distance import cdist
-import torch.nn.functional as F
+import csv
+
+from tl.utils.utils import str2bool
 from utils.network import backbone_net
-from utils.loss import Entropy
 from utils.LogRecord import LogRecord
 from utils.dataloader import read_mi_combine_tar
-from utils.utils import lr_scheduler_full, fix_random_seed, cal_acc_comb, data_loader
-from utils.utils import lr_scheduler, fix_random_seed, op_copy, cal_acc, cal_bca, cal_auc, str2bool
+from utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist
+from utils.alg_utils import EA, EA_online
+from scipy.linalg import fractional_matrix_power
+from models.cotta import CoTTA
+from sklearn.metrics import roc_auc_score, accuracy_score
 
 import gc
-import torch
 import sys
+import time
 
+# This is the implementation of Cotta from paper:
+# Q. Wang et al., “Continual test-time domain adaptation,” in Proc. IEEE/CVF Conf. Comput. Vis. Pattern Recognit., 2022, pp. 7201–7211.
+# @Time    : 2023/07/07
+# @Author  : Siyang Li
+# @File    : cotta.py
+# from github https://github.com/sylyoung/DeepTransferEEG/tree/main
 
-def obtain_label(loader, netF, netC, args):
-    start_test = True
-    with torch.no_grad():
-        iter_test = iter(loader)
-        for _ in range(len(loader)):
-            data = next(iter_test)
-            inputs = data[0]
-            labels = data[1]
-            inputs = inputs.cuda()
-            feas = netF(inputs)
-            outputs = netC(feas)
-            if start_test:
-                all_fea = feas.float().cpu()
-                all_output = outputs.float().cpu()
-                all_label = labels.float().cpu()
-                start_test = False
+def CoTTA_func(loader, model, args, balanced=True):
+    # CoTTA
+
+    if balanced == False and args.data_name == 'BNCI2014001-4':
+        print('ERROR, imbalanced multi-class not implemented')
+        sys.exit(0)
+
+    y_true = []
+    y_pred = []
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr_online)  # using the online learning rate
+
+    # initialize test reference matrix for Incremental EA
+    if args.align:
+        R = 0
+
+    iter_test = iter(loader)
+
+    # loop through test data stream one by one
+    for i in range(len(loader)):
+        #################### Phase 1: target label prediction ####################
+        model.eval()
+        data = next(iter_test)
+        inputs = data[0]
+        labels = data[1]
+        inputs = inputs.reshape(1, 1, inputs.shape[-2], inputs.shape[-1]).cpu()
+
+        # accumulate test data
+        if i == 0:
+            data_cum = inputs.float().cpu()
+        else:
+            data_cum = torch.cat((data_cum, inputs.float().cpu()), 0)
+
+        # Incremental EA
+        if args.align:
+            start_time = time.time()
+
+            if i == 0:
+                sample_test = data_cum.reshape(args.chn, args.time_sample_num)
             else:
-                all_fea = torch.cat((all_fea, feas.float().cpu()), 0)
-                all_output = torch.cat((all_output, outputs.float().cpu()), 0)
-                all_label = torch.cat((all_label, labels.float().cpu()), 0)
+                sample_test = data_cum[i].reshape(args.chn, args.time_sample_num)
+            # update reference matrix
+            R = EA_online(sample_test, R, i)
 
-    all_output = nn.Softmax(dim=1)(all_output)
-    ent = torch.sum(-all_output * torch.log(all_output + args.epsilon), dim=1)
-    unknown_weight = 1 - ent / np.log(args.class_num)
-    _, predict = torch.max(all_output, 1)
+            sqrtRefEA = fractional_matrix_power(R, -0.5)
+            # transform current test sample
+            sample_test = np.dot(sqrtRefEA, sample_test)
 
-    accuracy = torch.sum(torch.squeeze(predict).float() == all_label).item() / float(all_label.size()[0])
-    if args.distance == 'cosine':
-        all_fea = torch.cat((all_fea, torch.ones(all_fea.size(0), 1)), 1)
-        all_fea = (all_fea.t() / torch.norm(all_fea, p=2, dim=1)).t()
+            EA_time = time.time()
+            if args.calc_time:
+                print('sample ', str(i), ', pre-inference IEA finished time in ms:', np.round((EA_time - start_time) * 1000, 3))
+            sample_test = sample_test.reshape(1, 1, args.chn, args.time_sample_num)
+        else:
+            sample_test = data_cum[i].numpy()
+            sample_test = sample_test.reshape(1, 1, sample_test.shape[1], sample_test.shape[2])
 
-    all_fea = all_fea.float().cpu().numpy()
-    K = all_output.size(1)
-    aff = all_output.float().cpu().numpy()
+        if args.data_env != 'local':
+            sample_test = torch.from_numpy(sample_test).to(torch.float32).cuda()
+        else:
+            sample_test = torch.from_numpy(sample_test).to(torch.float32)
 
-    for _ in range(2):
-        # Iteratively refine the cluster centers based on the current predictions
-        initc = aff.transpose().dot(all_fea)
-        initc = initc / (1e-8 + aff.sum(axis=0)[:,None])  # weighted average for calculating the class center, and normalize the class center features
-        cls_count = np.eye(K)[predict].sum(axis=0)
-        labelset = np.where(cls_count>args.threshold)
-        labelset = labelset[0]
+        if (i + 1) >= args.test_batch:
+            model.train()
+            if args.stride != 1:
+                print('must have stride 1')
+                sys.exit(1)
+            else:
+                if (i + 1) == args.test_batch:
+                    # CoTTA mode initialize
+                    cottaed_model = CoTTA(model, optimizer, args.steps)
 
-        dd = cdist(all_fea, initc[labelset], args.distance)
-        pred_label = dd.argmin(axis=1)
-        predict = labelset[pred_label]
+                if args.align:
+                    batch_test = np.copy(data_cum[i - args.test_batch + 1:i + 1])
+                    # transform test batch
+                    batch_test = np.dot(sqrtRefEA, batch_test)
+                    batch_test = np.transpose(batch_test, (1, 2, 0, 3))
+                else:
+                    batch_test = data_cum[i - args.test_batch + 1:i + 1].numpy()
+                    batch_test = batch_test.reshape(args.test_batch, 1, batch_test.shape[2], batch_test.shape[3])
 
-        aff = np.eye(K)[predict]
+                if args.data_env != 'local':
+                    batch_test = torch.from_numpy(batch_test).to(torch.float32).cuda()
+                else:
+                    batch_test = torch.from_numpy(batch_test).to(torch.float32)
 
-    acc = np.sum(predict == all_label.float().numpy()) / len(all_fea)
-    log_str = 'Accuracy = {:.2f}% -> {:.2f}%'.format(accuracy * 100, acc * 100)
+                outputs = cottaed_model(batch_test)[-1].reshape(1, -1)
+        else:
+            _, outputs = model(sample_test)
 
-    args.out_file.write(log_str + '\n')
-    args.out_file.flush()
-    print(log_str+'\n')
+        softmax_out = nn.Softmax(dim=1)(outputs)
 
-    return predict.astype('int')
+        outputs = outputs.float().cpu()
+        labels = labels.float().cpu()
+        _, predict = torch.max(outputs, 1)
+
+        y_pred.append(softmax_out.detach().cpu().numpy())
+        y_true.append(labels.item())
+
+    if balanced:
+        _, predict = torch.max(torch.from_numpy(np.array(y_pred)).to(torch.float32).reshape(-1, args.class_num), 1)
+        pred = torch.squeeze(predict).float()
+        score = accuracy_score(y_true, pred)
+        if args.data_name == 'BNCI2014001-4':
+            y_pred = np.array(y_pred).reshape(-1, args.class_num)  
+        else:
+            y_pred = np.array(y_pred).reshape(-1, args.class_num)  
+    else:
+        predict = torch.from_numpy(np.array(y_pred)).to(torch.float32).reshape(-1, args.class_num)
+        y_pred = np.array(predict).reshape(-1, args.class_num) 
+        score = roc_auc_score(y_true, y_pred)
+
+    return score * 100, (y_pred, predict, y_true)
 
 
 def train_target(args):
-    
-    X_src, y_src, X_tar, y_tar = read_mi_combine_tar(args)
-    print('X_src, y_src, X_tar, y_tar:', X_src.shape, y_src.shape, X_tar.shape, y_tar.shape)
-    dset_loaders = data_loader(X_src, y_src, X_tar, y_tar, args)
-
-    netF, netC = backbone_net(args, return_type='y')
-    if args.data_env != 'local':
-        netF, netC = netF.cuda(), netC.cuda()
-    base_network = nn.Sequential(netF, netC)
-
-    criterion = nn.CrossEntropyLoss()
-
-    ######################################################################################################
-    # Source Model Training
-    ######################################################################################################
-
-    optimizer_f = optim.Adam(netF.parameters(), lr=args.lr)
-    optimizer_c = optim.Adam(netC.parameters(), lr=args.lr)
-
     if not args.align:
         extra_string = '_noEA'
     else:
         extra_string = ''
+    X_src, y_src, X_tar, y_tar = read_mi_combine_tar(args)
+    print('X_src, y_src, X_tar, y_tar:', X_src.shape, y_src.shape, X_tar.shape, y_tar.shape)
+    dset_loaders = data_loader(X_src, y_src, X_tar, y_tar, args)
+
+    # args.sample_rate = 6  # to set EEGNet kernal as 3, should be modified
+
+    netF, netC = backbone_net(args, return_type='xy')
+    if args.data_env != 'local':
+        netF, netC = netF.cuda(), netC.cuda()
+    base_network = nn.Sequential(netF, netC)
+
     if args.max_epoch == 0:
         if args.align:
             if args.data_env != 'local':
@@ -123,23 +174,22 @@ def train_target(args):
             else:
                 base_network.load_state_dict(torch.load(str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt', map_location=torch.device('cpu')))
-
     else:
+        criterion = nn.CrossEntropyLoss()
+        optimizer_f = optim.Adam(netF.parameters(), lr=args.lr)
+        optimizer_c = optim.Adam(netC.parameters(), lr=args.lr)
+
         max_iter = args.max_epoch * len(dset_loaders["source"])
-        #max_iter = args.max_epoch * len(dset_loaders["source-Imbalanced"])
         interval_iter = max_iter // args.max_epoch
         args.max_iter = max_iter
         iter_num = 0
         base_network.train()
-
-        print('Source Model Training')
 
         while iter_num < max_iter:
             try:
                 inputs_source, labels_source = next(iter_source)
             except:
                 iter_source = iter(dset_loaders["source"])
-                #iter_source = iter(dset_loaders["source-Imbalanced"])
                 inputs_source, labels_source = next(iter_source)
 
             if inputs_source.size(0) == 1:
@@ -147,143 +197,107 @@ def train_target(args):
 
             iter_num += 1
 
-            outputs_source = base_network(inputs_source)
+            features_source, outputs_source = base_network(inputs_source)
 
-            outputs_source = torch.nn.Softmax(dim=1)(outputs_source / 2)
-
-            args.trade_off = 1.0
             classifier_loss = criterion(outputs_source, labels_source)
-            total_loss = classifier_loss
 
             optimizer_f.zero_grad()
             optimizer_c.zero_grad()
-            total_loss.backward()
+            classifier_loss.backward()
             optimizer_f.step()
             optimizer_c.step()
 
             if iter_num % interval_iter == 0 or iter_num == max_iter:
                 base_network.eval()
 
-                acc_t_te, _ = cal_acc(dset_loaders["Target"], netF, netC, args=args)
-                log_str = 'Task: {}, Iter:{}/{}; Acc = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
-                #log_str = 'Task: {}, Iter:{}/{}; Acc = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source-Imbalanced"])), int(max_iter // len(dset_loaders["source-Imbalanced"])),acc_t_te)
+                if args.balanced:
+                    acc_t_te, _ = cal_acc_comb(dset_loaders["Target"], base_network, args=args)
+                    if args.align:
+                        log_str = 'Task: {}, Iter:{}/{}; Offline-EA Acc = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
+                    else:
+                        log_str = 'Task: {}, Iter:{}/{}; Offline Acc = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
+                else:
+                    acc_t_te, _ = cal_auc_comb(dset_loaders["Target-Imbalanced"], base_network, args=args)
+                    if args.align:
+                        log_str = 'Task: {}, Iter:{}/{}; Offline-EA AUC = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
+                    else:
+                        log_str = 'Task: {}, Iter:{}/{}; Offline AUC = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
                 args.log.record(log_str)
                 print(log_str)
 
                 base_network.train()
 
-    ######################################################################################################
-    # Source HypOthesis Transfer
-    ######################################################################################################
+        print('saving model...')
+        makedir_if_not_exist(os.path.join(str(args.param_runs), str(args.data_name)))
+        torch.save(base_network.state_dict(),
+                   str(args.param_runs) + str(args.data_name) + '/' + str(args.backbone) + '_S' + str(
+                       args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt')
 
-    print('Source HypOthesis Transfer')
     fix_random_seed(args.SEED)
-    #dset_loaders = data_loader(X_src, y_src, X_tar, y_tar, args)
+    base_network.eval()
 
-    netC.eval()
-    netF.train()
-
-    '''
-    # SHOT-original, commented out for SHOT-IM
-    for k, v in netC.named_parameters():
-        v.requires_grad = False
-
-    param_group = []
-    for k, v in netF.named_parameters():
-        if args.lr_decay1 > 0:
-            param_group += [{'params': v, 'lr': args.lr * args.lr_decay1}]
+    score = cal_score_online(dset_loaders["Target-Online"], base_network, args=args)
+    if args.balanced:
+        if args.align:
+            log_str = 'Task: {}, Online IEA Acc = {:.2f}%'.format(args.task_str, score)
         else:
-            v.requires_grad = False
+            log_str = 'Task: {}, Online Acc = {:.2f}%'.format(args.task_str, score)
+    else:
+        if args.align:
+            log_str = 'Task: {}, Online IEA AUC = {:.2f}%'.format(args.task_str, score)
+        else:
+            log_str = 'Task: {}, Online Acc = {:.2f}%'.format(args.task_str, score)
+    
+    args.log.record(log_str)
+    print(log_str)
 
-    optimizer = optim.Adam(param_group)
-    optimizer = op_copy(optimizer)
-    '''
-    optimizer = optim.Adam(netF.parameters(), lr=args.lr_online)
+    print('executing TTA...')
 
-    max_iter = args.online_epoch * len(dset_loaders["target"])
-    #max_iter = args.online_epoch * len(dset_loaders["target-Imbalanced"])
-    interval_iter = max_iter // args.interval
-    iter_num = 0
+    if args.balanced:
+        acc_t_te, (y_pred, predict, y_true) = CoTTA_func(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
+        log_str = 'Task: {}, TTA Acc = {:.2f}%'.format(args.task_str, acc_t_te)
+    else:
+        acc_t_te, (y_pred, predict, y_true) = CoTTA_func(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
+        log_str = 'Task: {}, TTA AUC = {:.2f}%'.format(args.task_str, acc_t_te)
+    args.log.record(log_str)
+    print(log_str)
 
-    while iter_num < max_iter:
-        try:
-            inputs_test, _ = next(iter_test)
-            tar_id += 1
-            tar_idx = np.arange(args.batch_size, dtype=int) + args.batch_size * tar_id
-        except:
-            iter_test = iter(dset_loaders["target"])
-            #iter_test = iter(dset_loaders["target-Imbalanced"])
-            inputs_test, _ = next(iter_test)
-            tar_id = 0
-            tar_idx = np.arange(args.batch_size, dtype=int)
+    if args.balanced:
+        print('Test Acc = {:.2f}%'.format(acc_t_te))
 
-        if inputs_test.size(0) == 1:
-            continue
+    else:
+        print('Test AUC = {:.2f}%'.format(acc_t_te))
 
-        if args.data_env != 'local':
-            inputs_test = inputs_test.cuda()
+    torch.save(base_network.state_dict(), str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(
+        args.SEED) + extra_string + '_adapted_m'+ str(args.momentum_param) + '.ckpt')
 
-        if iter_num % interval_iter == 0 and args.cls_par > 0:
-            netF.eval()
-            mem_label = obtain_label(dset_loaders["Target"], netF, netC, args)
-            mem_label = torch.from_numpy(mem_label)
-            if args.data_env != 'local':
-                mem_label = mem_label.cuda()
-            netF.train()
-
-        iter_num += 1
-        #lr_scheduler(optimizer, iter_num=iter_num, max_iter=max_iter)
-        features_test = netF(inputs_test)
-        outputs_test = netC(features_test)
-
-        # loss definition
-        # the hyperparameter args.cls_par will be used to set whether it is SHOT or SHOT-IM
-        # SHOT-IM if args.cls_par==0 else SHOT
-        # Calculate Self-supervised loss with presudo labels in SHOT
-        if args.cls_par > 0: 
-            pred = mem_label[tar_idx]
-            classifier_loss = nn.CrossEntropyLoss()(outputs_test, pred)
-            classifier_loss *= args.cls_par
-        else: # in SHOT-IM, the Self-supervised loss is set as 0
-            classifier_loss = torch.tensor(0.0)
-            if args.data_env != 'local':
-                classifier_loss = classifier_loss.cuda()
-        # Calculuate Information Maximization in SHOT-IM
-        if args.ent:
-            softmax_out = nn.Softmax(dim=1)(outputs_test)
-            entropy_loss = torch.mean(Entropy(softmax_out))
-            if args.gent:
-                msoftmax = softmax_out.mean(dim=0)
-                gentropy_loss = torch.sum(msoftmax * torch.log(msoftmax + args.epsilon))
-                entropy_loss += gentropy_loss
-            im_loss = entropy_loss * args.ent_par
-            classifier_loss += im_loss
-
-        optimizer.zero_grad()
-        classifier_loss.backward()
-        optimizer.step()
-
-        if iter_num % interval_iter == 0 or iter_num == max_iter:
-            netF.eval()
-            if args.paradigm == 'MI':
-                acc_t_te, y_pred = cal_acc(dset_loaders["Target"], netF, netC, args=args)
-                #acc_t_te, y_pred = cal_auc(dset_loaders["Target-Imbalanced"], netF, netC, args=args)
-                log_str = 'Task: {}, Iter:{}/{}; Acc = {:.2f}%'.format(args.task_str, iter_num, max_iter, acc_t_te)
-            args.log.record(log_str)
-            print(log_str)
-            netF.train()
-
-
-    print('Test Acc = {:.2f}%'.format(acc_t_te))
+    # save the predictions for ensemble
     file_path = os.path.join(str(args.result_dir), str(args.data_name) + '_' + str(args.method) + '_seed_' + str(args.SEED) + "_pred.csv")
-    with open(file_path, 'a') as f:
-        writer = csv.writer(f)
-        writer.writerow(y_pred.numpy())
+    # Check if the file exists
+    if os.path.exists(file_path):
+        df_existing = pd.read_csv(file_path)
+    else:
+        df_existing = pd.DataFrame()
+    # Convert torch.tensor to np.array and reshape
+    predict = predict.numpy().reshape(-1, 1)  # Convert torch.tensor to np.array and reshape
+    y_true = np.array(y_true).reshape(-1, 1)  # Convert list to np.array and reshape
+    # Combine y_pred, predict, and y_true into a single array
+    combined_data = np.hstack((y_pred, predict, y_true))
+    # Generate column names
+    class_columns = [f'Subject_{args.idt}_Class_{i}' for i in range(args.class_num)]
+    additional_columns = [f'Subject_{args.idt}_predict', f'Subject_{args.idt}_true']
+    header = class_columns + additional_columns
+    # Create a new DataFrame with the combined data and the header
+    df_new = pd.DataFrame(combined_data, columns=header)
+    # Combine existing data with new columns
+    df_combined = pd.concat([df_existing, df_new], axis=1)
+    # Save the combined DataFrame to CSV
+    df_combined.to_csv(file_path, index=False)
 
     gc.collect()
     if args.data_env != 'local':
         torch.cuda.empty_cache()
-    
+
     return acc_t_te
 
 
@@ -304,14 +318,12 @@ if __name__ == '__main__':
     parser.add_argument('--momentum_param', type=float, default=0.5, help='the value for momentum updating')
     parser.add_argument('--align', type=str2bool, default=True, help='use EA alignment and IEA alignment')
     parser.add_argument('--batch_size', type=int, default=32, help='batch size in offline training')
-    parser.add_argument('--batch_size_online', type=int, default=32, help='batch size in adaptation, this is only set for SHOT')
+    parser.add_argument('--batch_size_online', type=int, default=8, help='batch size in online adaptation')
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate in offline and online training')
     parser.add_argument('--lr_online', type=float, default=0.001, help='learning rate in online adaptation')
-    parser.add_argument('--epoch', type=int, default=100, help='epoches in offline training')
-    parser.add_argument('--online_epoch', type=int, default=5, help='epoches in online training, this is only set for SHOT')
+    parser.add_argument('--epoch', type=int, default=100, help='epoches in offline and online training')
     parser.add_argument('--backbone', type=str, default='EEGNet', help='backbone of the model')
     parser.add_argument('--param_runs', type=str, default='./runs/', help='folder for saving the run paramters')
-    parser.add_argument('--cls_par', type=float, default=0.0, help='set the value to control whether it is SHOT or SHOT-IM')
 
     args = parser.parse_args()
 
@@ -331,11 +343,9 @@ if __name__ == '__main__':
     batch_size_online = args.batch_size_online
     lr = args.lr
     epoch = args.epoch
-    online_epoch = args.online_epoch
     backbone = args.backbone
     param_runs = args.param_runs
     lr_online = args.lr_online
-    cls_par = args.cls_par
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -376,39 +386,61 @@ if __name__ == '__main__':
             if data_name == 'BNCI2014_004-test': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 9, 3, 2, 1126, 250, 400, 280
             if data_name == 'WBCIC-SHU-3C': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 11, 58, 3, 1000, 250, 900, 248
         
-        args = argparse.Namespace(feature_deep_dim=feature_deep_dim, lr=lr, lr_online=lr_online, lr_decay1=0.1, lr_decay2=1.0,
-                                  ent=True, gent=True, cls_par=cls_par, ent_par=1.0, epsilon=1e-05, layer='wn', interval=online_epoch,
-                                  trial_num=trial_num, time_sample_num=time_sample_num, sample_rate=sample_rate,
-                                  N=N, chn=chn, class_num=class_num, smooth=0, threshold=0, distance='cosine',
-                                  cov_type='oas', paradigm=paradigm, data_name=data_name, epoch=epoch, param_runs=param_runs,
-                                  data_path_MI = data_path_MI,finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param)
-
-        if cls_par > 0:
-            args.method = 'SHOT'
-        else:
-            args.method = 'SHOT-IM'
-        args.backbone = backbone
-
-        # whether to use EA
-        args.align = align
-
-        # train batch size
-        args.batch_size = batch_size
-        if paradigm == 'ERP':
-            args.batch_size = 256
-
-        # training epochs
-        # 0 means use pretrained models from dnn.py for SFUDA
+        # whether to use pretrained model
+        # if source models have not been trained, set use_pretrained_model to False to train them
+        # alternatively, run dnn.py to train source models, in seperating the steps
         if use_pretrained_model:
             # no training
-            args.max_epoch = 0
+            max_epoch = 0
         else:
             # training epochs
-            args.max_epoch = epoch
-        # training epoches for SHOT
-        args.online_epoch = online_epoch
+            max_epoch = epoch
 
-        # path for saving the accuracies
+        # learning rate
+        lr = lr
+
+        # test batch size
+        test_batch = batch_size_online
+
+        # update step
+        steps = 1
+
+        # update stride
+        stride = 1
+
+        # whether to use EA
+        align = align
+
+        # whether to test balanced or imbalanced (2:1) target subject
+        balanced = True
+
+        # whether to record running time
+        calc_time = False
+
+        # whether to use finetuning methods for some of the MI tasks and set how much data for finetuning
+        if finetune:
+            print('finetune: {}, ft_volume: {}'.format(finetune, ft_volume))
+
+        # whether to use momentum updating method
+        if momentum:
+            print('momentum: {}, momentum_param: {}'.format(momentum, momentum_param))
+
+        args = argparse.Namespace(feature_deep_dim=feature_deep_dim, align=align, lr=lr, max_epoch=max_epoch,
+                                  trial_num=trial_num, time_sample_num=time_sample_num, sample_rate=sample_rate,
+                                  N=N, chn=chn, class_num=class_num, stride=stride, steps=steps, calc_time=calc_time,
+                                  paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced,
+                                  data_path_MI = data_path_MI,finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param)
+        
+        args.method = 'CoTTA'
+        args.backbone = backbone
+
+        args.epoch = epoch
+        # train batch size
+        args.batch_size = batch_size
+        args.lr_online = lr_online  # learning rate for online adaptation
+
+        # path for saving the offline models
+        args.param_runs = param_runs
         args.runs_path = str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)
 
         # GPU device id
@@ -418,9 +450,9 @@ if __name__ == '__main__':
             args.data_env = 'gpu' if torch.cuda.device_count() != 0 else 'local'
         except:
             args.data_env = 'local'
-
         total_acc = []
 
+        # update multiple models, independently, from the source models
         for s in [1, 2, 3, 4, 5]:
             args.SEED = s
 
@@ -443,8 +475,8 @@ if __name__ == '__main__':
             for idt in range(N):
                 fix_random_seed(args.SEED)
                 args.idt = idt
-                source_str = 'Except_S' + str(idt + 1)
-                target_str = 'S' + str(idt + 1)
+                source_str = 'Except_S' + str(idt)
+                target_str = 'S' + str(idt)
                 args.task_str = source_str + '_2_' + target_str
                 info_str = '\n========================== Transfer to ' + target_str + ' =========================='
                 print(info_str)
