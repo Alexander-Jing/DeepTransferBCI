@@ -1,6 +1,11 @@
+import random
+import copy
+import torch
+import torch.nn.functional as F
+import numpy as np
 import math
 
-# for sotta.py
+
 class MemoryItem:
     def __init__(self, data=None, uncertainty=0, age=0):
         self.data = data
@@ -28,25 +33,6 @@ class CSTU:
 
         self.data: list[list[MemoryItem]] = [[] for _ in range(self.num_class)]
 
-    def set_memory(self, state_dict):  # for tta_attack
-        self.capacity = state_dict['capacity']
-        self.num_class = state_dict['num_class']
-        self.per_class = state_dict['per_class']
-        self.lambda_t = state_dict['lambda_t']
-        self.lambda_u = state_dict['lambda_u']
-        self.data = [ls[:] for ls in state_dict['data']]
-
-    def save_state_dict(self):
-        dic = {}
-        dic['capacity'] = self.capacity
-        dic['num_class'] = self.num_class
-        dic['per_class'] = self.per_class
-        dic['lambda_t'] = self.lambda_t
-        dic['lambda_u'] = self.lambda_u
-        dic['data'] = [ls[:] for ls in self.data]
-
-        return dic
-
     def get_occupancy(self):
         occupancy = 0
         for data_per_cls in self.data:
@@ -73,11 +59,12 @@ class CSTU:
         class_list = self.data[cls]
         class_occupied = len(class_list)
         all_occupancy = self.get_occupancy()
-        if all_occupancy < self.capacity:
-            return True
         if class_occupied < self.per_class:
-            majority_classes = self.get_majority_classes()
-            return self.remove_from_classes(majority_classes, score)
+            if all_occupancy < self.capacity:
+                return True
+            else:
+                majority_classes = self.get_majority_classes()
+                return self.remove_from_classes(majority_classes, score)
         else:
             return self.remove_from_classes([cls], score)
 
@@ -115,8 +102,7 @@ class CSTU:
         return classes
 
     def heuristic_score(self, age, uncertainty):
-        return self.lambda_t * 1 / (1 + math.exp(-age / self.capacity)) + self.lambda_u * uncertainty / math.log(
-            self.num_class)
+        return self.lambda_t * 1 / (1 + math.exp(-age / self.capacity)) + self.lambda_u * uncertainty / math.log(self.num_class)
 
     def add_age(self):
         for class_list in self.data:

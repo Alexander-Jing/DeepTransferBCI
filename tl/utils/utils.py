@@ -18,6 +18,7 @@ import learn2learn as l2l
 from sklearn.metrics import balanced_accuracy_score, accuracy_score, roc_auc_score
 from scipy.linalg import fractional_matrix_power
 from learn2learn.data.transforms import NWays, KShots, LoadData
+import torch.optim as optim
 
 from tl.utils.alg_utils import EA, EA_online
 
@@ -710,3 +711,43 @@ def str2bool(v):
 def makedir_if_not_exist(specified_dir):
     if not os.path.exists(specified_dir):
         os.makedirs(specified_dir)
+
+def get_named_submodule(model, sub_name: str):
+    names = sub_name.split(".")
+    module = model
+    for name in names:
+        module = getattr(module, name)
+
+    return module
+
+
+def set_named_submodule(model, sub_name, value):
+    names = sub_name.split(".")
+    module = model
+    for i in range(len(names)):
+        if i != len(names) - 1:
+            module = getattr(module, names[i])
+
+        else:
+            setattr(module, names[i], value)
+
+
+def build_optimizer(args):
+    def optimizer(params):
+        if args.optim_method == 'Adam':
+            return optim.Adam(params,
+                              lr=args.lr_online,
+                              betas=(args.beta, 0.999),
+                              weight_decay=args.weight_decay)
+        elif args.optim_method == 'SGD':
+            return optim.SGD(params,
+                             lr=args.lr_online,
+                             momentum=args.optim_momentum,
+                             dampening=args.optim_dampening,
+                             weight_decay=args.weight_decay,
+                             nesterov=args.nesterov)
+        else:
+            raise NotImplementedError
+
+    return optimizer
+
