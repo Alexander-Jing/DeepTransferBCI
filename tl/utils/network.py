@@ -8,9 +8,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.utils.weight_norm as weightNorm
 
-from models.EEGNet import EEGNet_feature, EEGNet
-from models.EEGTCNet import EEGTCNet_feature
-from models.FC import FC, FC_xy
+from tl.models.EEGNet import EEGNet_feature, EEGNet
+from tl.models.EEGTCNet import EEGTCNet_feature
+from tl.models.FC import FC, FC_xy
 
 
 def backbone_net(args, return_type='y'):

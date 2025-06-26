@@ -9,29 +9,32 @@ import pandas as pd
 import csv
 
 from tl.utils.utils import str2bool
-from tl.utils.network import backbone_net
-from tl.utils.LogRecord import LogRecord
-from tl.utils.dataloader import read_mi_combine_tar
-from tl.utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist, build_optimizer
-from tl.utils.alg_utils import EA, EA_online
+from utils.network import backbone_net
+from utils.LogRecord import LogRecord
+from utils.dataloader import read_mi_combine_tar
+from utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist
+from utils.alg_utils import EA, EA_online
+from utils.base_selection_aea import ExpMovingAVG
+from utils.api_aea import Batch
+from utils.metrics_faea import Logger
+from utils.metrics_faea import Timer
 from scipy.linalg import fractional_matrix_power
-from tl.models.proposed_method import proposed_TTA
+from models.aea import ENETTA
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 import gc
 import sys
 import time
-from box import Box
-from collections import OrderedDict
 
-# This is the implementation of the proposed method for experiments
-# @Time    : 2025/06/10
+# This is the implementation of AEA from paper
+# Choi W, Kim D Y, Park J, et al. Adaptive Energy Alignment for Accelerating Test-Time Adaptation[C]//The Thirteenth International Conference on Learning Representations. (ICLR 2025)
+# @Time    : 2025/06/23
 # @Author  : Yitao Jing
-# @File    : ours_debug_m_cls_process_1.py
-# from github 
+# @File    : aea.py
+# from github https://github.com/wonjeongchoi/AEA
 
-def motta_func(loader, model, args, balanced=True):
-    # Tent
+def aea_func(loader, model, args, balanced=True):
+    # AEA (ENTTA)
 
     if balanced == False and args.data_name == 'BNCI2014001-4':
         print('ERROR, imbalanced multi-class not implemented')
@@ -45,13 +48,6 @@ def motta_func(loader, model, args, balanced=True):
         R = 0
 
     iter_test = iter(loader)
-
-    motta_model = proposed_TTA(model=model, paras_optim=args.paras_optim, capacity=args.capacity,num_classes=args.class_num, bn_alpha=args.bn_alpha, temp_factor=1, 
-                        update_frequency=args.update_frequency, update_counter=args.update_counter, 
-                        confidence_threshold=args.confidence_threshold, uncertainty_threshold=args.uncertainty_threshold, prune_ratio=args.prune_ratio, pruning_strategy=args.pruning_strategy,
-                        pruning_module=args.pruning_module, metric_name=args.metric_name, arch=args.backbone,
-                        dataset=args.data_name, enable_robustBN=False, loss_name='NegWeightedMutualInformation_on_marginal', paras_loss={"lambda_info": 0.})
-    motta_model.cuda()
 
     # loop through test data stream one by one
     for i in range(len(loader)):
@@ -96,7 +92,38 @@ def motta_func(loader, model, args, balanced=True):
         else:
             sample_test = torch.from_numpy(sample_test).to(torch.float32)
 
-        outputs = motta_model(sample_test)["logits"]
+        if (i + 1) >= args.test_batch and (i + 1) % args.stride == 0:
+
+            if (i + 1) == args.test_batch:
+                # initilize the AEA for the model
+                adapt_model = ENETTA(args, model)
+                model_selection_method = ExpMovingAVG(args, model)
+                batch_online = Batch
+
+                
+            if args.align:
+                batch_test = np.copy(data_cum[i - args.test_batch + 1:i + 1])
+                # transform test batch
+                batch_test = np.dot(sqrtRefEA, batch_test)
+                batch_test = np.transpose(batch_test, (1, 2, 0, 3))
+            else:
+                batch_test = data_cum[i - args.test_batch + 1:i + 1].numpy()
+                batch_test = batch_test.reshape(args.test_batch, 1, batch_test.shape[2], batch_test.shape[3])
+
+            if args.data_env != 'local':
+                batch_test = torch.from_numpy(batch_test).to(torch.float32).cuda()
+            else:
+                batch_test = torch.from_numpy(batch_test).to(torch.float32)
+
+            batch_online._x = batch_test
+            outputs = adapt_model.adapt_and_eval(episodic=False, 
+                                                    model_selection_method=model_selection_method,
+                                                    current_batch=batch_online,
+                                                    previous_batches=[],
+                                                )[-1].reshape(1, -1)
+                
+        else:
+            _, outputs = model(sample_test)
 
         softmax_out = nn.Softmax(dim=1)(outputs)
 
@@ -137,11 +164,6 @@ def train_target(args):
     if args.data_env != 'local':
         netF, netC = netF.cuda(), netC.cuda()
     base_network = nn.Sequential(netF, netC)
-    # for spliting the model in motta
-    """base_network = nn.Sequential(OrderedDict([
-        ('netF', netF),
-       ('netC', netC),
-    ]))"""
 
     if args.max_epoch == 0:
         if args.align:
@@ -238,10 +260,10 @@ def train_target(args):
     print('executing TTA...')
 
     if args.balanced:
-        acc_t_te, (y_pred, predict, y_true) = motta_func(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
+        acc_t_te, (y_pred, predict, y_true) = aea_func(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
         log_str = 'Task: {}, TTA Acc = {:.2f}%'.format(args.task_str, acc_t_te)
     else:
-        acc_t_te, (y_pred, predict, y_true) = motta_func(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
+        acc_t_te, (y_pred, predict, y_true) = aea_func(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
         log_str = 'Task: {}, TTA AUC = {:.2f}%'.format(args.task_str, acc_t_te)
     args.log.record(log_str)
     print(log_str)
@@ -390,7 +412,7 @@ if __name__ == '__main__':
         steps = 1
 
         # update stride
-        stride = 1
+        stride = 64
 
         # whether to use EA
         align = align
@@ -415,7 +437,7 @@ if __name__ == '__main__':
                                   paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced, data_path_MI = data_path_MI,
                                   finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param)
 
-        args.method = 'proposed_method'
+        args.method = 'aea'
         args.backbone = backbone
 
         args.epoch = epoch
@@ -427,6 +449,28 @@ if __name__ == '__main__':
         args.param_runs = param_runs
         args.runs_path = str(args.param_runs)  + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)
 
+        # hyperparameters for AEA online adaptation
+        args.lamb1 = 1.0
+        args.lamb2 = 1.0
+        args.lamb3 = 25.0
+        args.decay_beta = 0.001
+        args.lcs_thr = 0.66
+        args.ss_ratio = 0.25
+        args.adapt_layers = "norm"
+        args.loss_name = "em_energy_sp_wlcs"
+        args.stochastic_restore_model = False
+
+        args.n_train_steps = 1
+        args.model_adaptation_method = "entta"
+        args.model_selection_method = "ExpMovingAVG"
+        args.optimizer = "SGD"
+
+        args.exp_alpha = 0.1
+        args.sb_avg = False
+        args.mb_avg = True
+        args.start_n = 1
+        args.multi_batch_start_n = 1
+
         # GPU device id
         try:
             device_id = gpu_idx
@@ -434,34 +478,6 @@ if __name__ == '__main__':
             args.data_env = 'gpu' if torch.cuda.device_count() != 0 else 'local'
         except:
             args.data_env = 'local'
-
-        # hyperparameters for rotta
-        args.paras_optim = Box({
-            "name": "GAM",
-            "base_optimizer": {
-                "name": "Adam",
-                "lr": 0.00025,
-                "beta": 0.9,        
-                "wd": 0.0           
-            },
-            "reg_strength": 0.1,    
-            "lambda_0_flat": 0.3,   
-            "grad_gamma": 0.05,     
-            "grad_rho": 0.01,       
-            "grad_norm_rho": 0.2,   
-            "use_projection": True  
-        })
-        args.capacity = 64
-        args.bn_alpha = 0.2
-        args.update_frequency = 64
-        args.update_counter = 'each'
-        args.confidence_threshold = 0.33
-        args.uncertainty_threshold = 17.0
-        args.prune_ratio = 0.5
-        args.pruning_strategy = 'ln_structured'
-        args.pruning_module = 'conv'
-        args.metric_name = 'max_angle_change_feature_fc'
-
         total_acc = []
 
         # update multiple models, independently, from the source models

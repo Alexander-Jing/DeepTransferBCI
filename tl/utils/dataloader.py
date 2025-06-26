@@ -6,7 +6,7 @@ import numpy as np
 from sklearn import preprocessing
 import os
 import scipy.io as sio
-from utils.data_utils import traintest_split_cross_subject, traintest_split_cross_subject_meta, traintest_split_domain_classifier, traintest_split_multisource, traintest_split_domain_classifier_pretest, traintest_split_multisource
+from tl.utils.data_utils import traintest_split_cross_subject, traintest_split_cross_subject_meta, traintest_split_domain_classifier, traintest_split_multisource, traintest_split_domain_classifier_pretest, traintest_split_multisource
 import pandas as pd
 
 def data_process(args):

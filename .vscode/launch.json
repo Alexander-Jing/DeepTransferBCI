@@ -229,7 +229,7 @@
             "name": "Python: TTA-BCNI2014001-4-test",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/motta.py",
+            "program": "${workspaceFolder}/tl/aea.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -237,7 +237,7 @@
                 "--data_save", "True",
                 "--data_path", "./data/",
                 "--data_path_MI", "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/",
-                "--log_path", "./logs/Baselines-001-test-e300-b64-debugs/motta-BNCI2014001-4-all-EEGNet-4,2-e300-b64/",
+                "--log_path", "./logs/Baselines-001-test-e300-b64-debugs/aea-BNCI2014001-4-all-EEGNet-4,2-e300-b64/",
                 "--use_pretrained_model", "True",
                 "--finetune", "False",
                 "--momentum", "False",
@@ -245,6 +245,71 @@
                 "--gpu_idx", "1",
                 "--align", "True",
                 "--batch_size", "64",
+                "--lr", "0.001",
+                "--lr_online", "0.001",
+                "--epoch", "300",
+                "--backbone", "EEGNet-4,2",
+                "--param_runs", "./runs_debug/",
+                "--batch_size_online", "64"
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: TTA-BCNI2014001-4-all-proposed",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_1.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "BNCI2014001-4-all",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--data_path_MI", "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/",
+                "--log_path", "./logs/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/",
+                "--use_pretrained_model", "True",
+                "--finetune", "False",
+                "--momentum", "False",
+                "--momentum_param", "0.5",
+                "--gpu_idx", "1",
+                "--align", "True",
+                "--batch_size", "64",
+                "--lr", "0.001",
+                "--lr_online", "0.001",
+                "--epoch", "300",
+                "--backbone", "EEGNet-4,2",
+                "--param_runs", "./runs_debug/",
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: TTA-BCNI2014001-4-all-additional_test",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "BNCI2014001-4-all",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--data_path_MI", "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/",
+                "--log_path", "./logs/Baselines-001-test-e300-b64-debugs/additional_test-BNCI2014001-4-all-EEGNet-4,2-e300-b64/",
+                "--use_pretrained_model", "True",
+                "--finetune", "False",
+                "--momentum", "False",
+                "--momentum_param", "0.5",
+                "--gpu_idx", "1",
+                "--align", "True",
+                "--batch_size", "64",
+                "--batch_size_online", "64",
+                "--stride", "64",
                 "--lr", "0.001",
                 "--lr_online", "0.001",
                 "--epoch", "300",
@@ -300,7 +365,7 @@
                 "--data_save", "False",
                 "--data_path", "./data/",
                 "--data_path_MI", "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/",
-                "--log_path", "./logs/Baselines-WBCIC-SHU-3C-e300-b64/ttime-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/",
+                "--log_path", "./logs/Baselines-WBCIC-SHU-3C-e300-b64/sotta-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/",
                 "--use_pretrained_model", "True",
                 "--finetune", "False",
                 "--momentum", "False",

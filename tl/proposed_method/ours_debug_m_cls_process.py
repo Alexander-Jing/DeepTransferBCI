@@ -10,13 +10,13 @@ import csv
 import copy
 
 from tl.utils.utils import str2bool
-from utils.network import backbone_net
-from utils.LogRecord import LogRecord
-from utils.dataloader import read_mi_combine_tar
-from utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist
-from utils.alg_utils import EA, EA_online
+from tl.utils.network import backbone_net
+from tl.utils.LogRecord import LogRecord
+from tl.utils.dataloader import read_mi_combine_tar
+from tl.utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist
+from tl.utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
-from utils.loss import Entropy
+from tl.utils.loss import Entropy
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 import gc
@@ -388,6 +388,7 @@ if __name__ == '__main__':
     parser.add_argument('--align', type=str2bool, default=True, help='use EA alignment and IEA alignment')
     parser.add_argument('--batch_size', type=int, default=32, help='batch size in offline training')
     parser.add_argument('--batch_size_online', type=int, default=8, help='batch size in online adaptation')
+    parser.add_argument('--stride', type=int, default=1, help='stride in online adaptation')
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate in offline and online training')
     parser.add_argument('--lr_online', type=float, default=0.001, help='learning rate in online adaptation')
     parser.add_argument('--epoch', type=int, default=100, help='epoches in offline and online training')
@@ -477,7 +478,7 @@ if __name__ == '__main__':
         steps = 1
 
         # update stride
-        stride = 1
+        stride = args.stride
 
         # whether to use EA
         align = align
@@ -505,7 +506,7 @@ if __name__ == '__main__':
                                   paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced,
                                   data_path_MI = data_path_MI,finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param)
 
-        args.method = 'T-TIME'
+        args.method = 'T-TIME-addtional_test'
         args.backbone = backbone
 
         args.epoch = epoch
