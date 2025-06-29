@@ -7,31 +7,33 @@ import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
 import csv
+import copy
 
 from tl.utils.utils import str2bool
-from tl.utils.network import backbone_net
-from tl.utils.LogRecord import LogRecord
-from tl.utils.dataloader import read_mi_combine_tar
-from tl.utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist, build_optimizer
-from tl.utils.alg_utils import EA, EA_online
+from utils.network import backbone_net
+from utils.LogRecord import LogRecord
+from utils.dataloader import read_mi_combine_tar
+from utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist
+from utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
-from tl.models.proposed_method import proposed_TTA
+from utils.loss import Entropy
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 import gc
 import sys
 import time
-from box import Box
-from collections import OrderedDict
 
-# This is the implementation of the proposed method for experiments
-# @Time    : 2025/06/10
-# @Author  : Yitao Jing
-# @File    : ours_debug_m_cls_process_1.py
-# from github 
+# This is the implementation of T-TIME from paper
+# Li S, Wang Z, Luo H, et al. T-TIME: Test-time information maximization ensemble for plug-and-play BCIs[J]. IEEE Transactions on Biomedical Engineering, 2023.
+# @Time    : 2023/07/07
+# @Author  : Siyang Li
+# @File    : ttime.py
+# from github https://github.com/sylyoung/DeepTransferEEG/tree/main
 
-def motta_func(loader, model, args, balanced=True):
-    # Tent
+def TTIME(loader, model, args, balanced=True):
+    # "T-TIME: Test-Time Information Maximization Ensemble for Plug-and-Play BCIs"
+    # IEEE Transactions on Biomedical Engineering
+    # Note that the ensemble experiment is separately implemented in ttime_ensemble.py, using recorded test prediction.
 
     if balanced == False and args.data_name == 'BNCI2014001-4':
         print('ERROR, imbalanced multi-class not implemented')
@@ -40,18 +42,17 @@ def motta_func(loader, model, args, balanced=True):
     y_true = []
     y_pred = []
 
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr_online)
+
     # initialize test reference matrix for Incremental EA
     if args.align:
         R = 0
 
-    iter_test = iter(loader)
+    if not balanced:
+        zk_arrs = np.zeros(2)
+        c = 4
 
-    proposed_TTA_model = proposed_TTA(model=model, paras_optim=args.paras_optim, capacity=args.capacity,num_classes=args.class_num, bn_alpha=args.bn_alpha, temp_factor=1, 
-                        update_frequency=args.update_frequency, update_counter=args.update_counter, 
-                        confidence_threshold=args.confidence_threshold, uncertainty_threshold=args.uncertainty_threshold, prune_ratio=args.prune_ratio, pruning_strategy=args.pruning_strategy,
-                        pruning_module=args.pruning_module, metric_name=args.metric_name, arch=args.backbone, use_BN=args.use_BN,
-                        dataset=args.data_name, enable_robustBN=False, loss_name='MemorySoftplusEnergyAlignment', paras_loss={"lambda_info": 0.})
-    proposed_TTA_model.cuda()
+    iter_test = iter(loader)
 
     # loop through test data stream one by one
     for i in range(len(loader)):
@@ -75,7 +76,7 @@ def motta_func(loader, model, args, balanced=True):
             if i == 0:
                 sample_test = data_cum.reshape(args.chn, args.time_sample_num)
             else:
-                sample_test = data_cum[i].reshape(args.chn, args.time_sample_num)
+                sample_test = data_cum[i].reshape(args.chn, args.time_sample_num)  # get the ith sample for IEA and evaluation
             # update reference matrix
             R = EA_online(sample_test, R, i)
 
@@ -96,7 +97,7 @@ def motta_func(loader, model, args, balanced=True):
         else:
             sample_test = torch.from_numpy(sample_test).to(torch.float32)
 
-        outputs = proposed_TTA_model(sample_test)["logits"]
+        _, outputs = model(sample_test)
 
         softmax_out = nn.Softmax(dim=1)(outputs)
 
@@ -106,6 +107,99 @@ def motta_func(loader, model, args, balanced=True):
 
         y_pred.append(softmax_out.detach().cpu().numpy())
         y_true.append(labels.item())
+
+        #################### Phase 2: target model update ####################
+        model.train()
+        # sliding batch
+        if (i + 1) >= args.test_batch and (i + 1) % args.stride == 0:
+            if args.align:
+                batch_test = np.copy(data_cum[i - args.test_batch + 1:i + 1])
+                # transform test batch
+                batch_test = np.dot(sqrtRefEA, batch_test)
+                batch_test = np.transpose(batch_test, (1, 2, 0, 3))
+            else:
+                batch_test = data_cum[i - args.test_batch + 1:i + 1].numpy()
+                batch_test = batch_test.reshape(args.test_batch, 1, batch_test.shape[2], batch_test.shape[3])
+
+            if args.data_env != 'local':
+                batch_test = torch.from_numpy(batch_test).to(torch.float32).cuda()
+            else:
+                batch_test = torch.from_numpy(batch_test).to(torch.float32)
+
+            if args.momentum:
+                # copy the parameters of the model
+                model_k = copy.deepcopy(model)
+
+            # update target model
+            start_time = time.time()
+            for step in range(args.steps):
+
+                _, outputs = model(batch_test)
+                outputs = outputs.float().cpu()
+
+                args.epsilon = 1e-5
+                softmax_out = nn.Softmax(dim=1)(outputs / args.t)
+                # Conditional Entropy Minimization loss
+                CEM_loss = torch.mean(Entropy(softmax_out))
+                msoftmax = softmax_out.mean(dim=0)
+
+                if balanced:
+                    # Marginal Distribution Regularization loss
+                    MDR_loss = torch.sum(msoftmax * torch.log(msoftmax + args.epsilon))
+                    loss = CEM_loss # + MDR_loss  # in this additional experiment, no MDR loss is implemented
+                else:
+                    # Adaptive Marginal Distribution Regularization
+                    qk = torch.zeros((args.class_num, )).to(torch.float32)
+                    for k in range(args.class_num):
+                        qk[k] = msoftmax[k] / (c + zk_arrs[k])
+                    sum_qk = torch.sum(qk)
+                    normed_qk = qk / sum_qk
+                    AMDR_loss = torch.sum(normed_qk * torch.log(normed_qk + args.epsilon))
+                    loss = CEM_loss + AMDR_loss
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+            if args.momentum:
+                # Momentum update for the model parameters
+                with torch.no_grad():
+                    for param_q, param_k in zip(model.parameters(), model_k.parameters()):
+                        param_k.data = param_k.data * args.momentum_param + param_q.data * (1. - args.momentum_param)
+                # Update the model
+                model = copy.deepcopy(model_k)
+
+            TTA_time = time.time()
+            if args.calc_time:
+                print('sample ', str(i), ', post-inference model update finished in ms:', np.round((TTA_time - start_time) * 1000, 3))
+
+            if not balanced:
+                if i + 1 == args.test_batch:
+                    args.pred_thresh = 0.7
+                    pl = torch.max(softmax_out, 1)[1]
+                    for l in range(args.test_batch):
+                        if pl[l] == 0:
+                            if softmax_out[l][0] > args.pred_thresh:
+                                zk_arrs[0] += 1
+                        elif pl[l] == 1:
+                            if softmax_out[l][1] > args.pred_thresh:
+                                zk_arrs[1] += 1
+                        else:
+                            print('ERROR in pseudo labeling!')
+                            sys.exit(0)
+                else:
+                    # update confident prediction ids for current test sample
+                    pl = torch.max(softmax_out, 1)[1]
+                    if pl[-1] == 0:
+                        if softmax_out[-1][0] > args.pred_thresh:
+                            zk_arrs[0] += 1
+                    elif pl[-1] == 1:
+                        if softmax_out[-1][1] > args.pred_thresh:
+                            zk_arrs[1] += 1
+                    else:
+                        print('ERROR in pseudo labeling!')
+
+        model.eval()
 
     if balanced:
         _, predict = torch.max(torch.from_numpy(np.array(y_pred)).to(torch.float32).reshape(-1, args.class_num), 1)
@@ -119,6 +213,7 @@ def motta_func(loader, model, args, balanced=True):
         predict = torch.from_numpy(np.array(y_pred)).to(torch.float32).reshape(-1, args.class_num)
         y_pred = np.array(predict).reshape(-1, args.class_num)  
         score = roc_auc_score(y_true, y_pred)
+
     return score * 100, (y_pred, predict, y_true)
 
 
@@ -130,33 +225,26 @@ def train_target(args):
     X_src, y_src, X_tar, y_tar = read_mi_combine_tar(args)
     print('X_src, y_src, X_tar, y_tar:', X_src.shape, y_src.shape, X_tar.shape, y_tar.shape)
     dset_loaders = data_loader(X_src, y_src, X_tar, y_tar, args)
-
-    # args.sample_rate = 6  # to set EEGNet kernal as 3, should be modified 
-
+    # args.sample_rate = 64  # to set EEGNet kernal as 32
     netF, netC = backbone_net(args, return_type='xy')
     if args.data_env != 'local':
         netF, netC = netF.cuda(), netC.cuda()
     base_network = nn.Sequential(netF, netC)
-    # for spliting the model in motta
-    """base_network = nn.Sequential(OrderedDict([
-        ('netF', netF),
-       ('netC', netC),
-    ]))"""
 
     if args.max_epoch == 0:
         if args.align:
             if args.data_env != 'local':
-                base_network.load_state_dict(torch.load(str(args.param_runs)  + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load(str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt'))
             else:
-                base_network.load_state_dict(torch.load(str(args.param_runs)  + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load(str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt', map_location=torch.device('cpu')))
         else:
             if args.data_env != 'local':
-                base_network.load_state_dict(torch.load(str(args.param_runs)  + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load(str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt'))
             else:
-                base_network.load_state_dict(torch.load(str(args.param_runs)  + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load(str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt', map_location=torch.device('cpu')))
     else:
         criterion = nn.CrossEntropyLoss()
@@ -193,7 +281,7 @@ def train_target(args):
 
             if iter_num % interval_iter == 0 or iter_num == max_iter:
                 base_network.eval()
-
+                # "Target" data have been aligned by EA
                 if args.balanced:
                     acc_t_te, _ = cal_acc_comb(dset_loaders["Target"], base_network, args=args)
                     if args.align:
@@ -214,13 +302,15 @@ def train_target(args):
         print('saving model...')
         makedir_if_not_exist(os.path.join(str(args.param_runs), str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)))
         torch.save(base_network.state_dict(),
-                   str(args.param_runs)  + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(
+                    str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(
                        args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt')
 
-    fix_random_seed(args.SEED)
+    fix_random_seed(args.SEED)  # further fix the seed
     base_network.eval()
-
+    # "Target-Online" data haven't been aligned by EA
+    # cal_score_online function used incremental EA for the "Target-Online" data to test the model
     score = cal_score_online(dset_loaders["Target-Online"], base_network, args=args)
+    
     if args.balanced:
         if args.align:
             log_str = 'Task: {}, Online IEA Acc = {:.2f}%'.format(args.task_str, score)
@@ -238,10 +328,10 @@ def train_target(args):
     print('executing TTA...')
 
     if args.balanced:
-        acc_t_te, (y_pred, predict, y_true) = motta_func(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
+        acc_t_te, (y_pred, predict, y_true) = TTIME(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
         log_str = 'Task: {}, TTA Acc = {:.2f}%'.format(args.task_str, acc_t_te)
     else:
-        acc_t_te, (y_pred, predict, y_true) = motta_func(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
+        acc_t_te, (y_pred, predict, y_true) = TTIME(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
         log_str = 'Task: {}, TTA AUC = {:.2f}%'.format(args.task_str, acc_t_te)
     args.log.record(log_str)
     print(log_str)
@@ -252,7 +342,7 @@ def train_target(args):
     else:
         print('Test AUC = {:.2f}%'.format(acc_t_te))
 
-    torch.save(base_network.state_dict(), str(args.param_runs)  + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(
+    torch.save(base_network.state_dict(), str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(
         args.SEED) + extra_string + '_adapted_m'+ str(args.momentum_param) + '.ckpt')
 
     # save the predictions for ensemble
@@ -277,7 +367,7 @@ def train_target(args):
     df_combined = pd.concat([df_existing, df_new], axis=1)
     # Save the combined DataFrame to CSV
     df_combined.to_csv(file_path, index=False)
-
+    
     gc.collect()
     if args.data_env != 'local':
         torch.cuda.empty_cache()
@@ -308,7 +398,6 @@ if __name__ == '__main__':
     parser.add_argument('--epoch', type=int, default=100, help='epoches in offline and online training')
     parser.add_argument('--backbone', type=str, default='EEGNet', help='backbone of the model')
     parser.add_argument('--param_runs', type=str, default='./runs/', help='folder for saving the run paramters')
-    parser.add_argument('--use_BN', type=str2bool, default=True, help='whether to only use BN adaptation')
 
     args = parser.parse_args()
 
@@ -331,7 +420,6 @@ if __name__ == '__main__':
     backbone = args.backbone
     param_runs = args.param_runs
     lr_online = args.lr_online
-    use_BN = args.use_BN
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -343,6 +431,7 @@ if __name__ == '__main__':
     data_name_list = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4', 'MI-hand_elbow','MI-elbow_rest', 'MI-hand_rest', 
                       'BNCI2014001-4-all', 'BNCI2014001-4-test', 'BNCI2014001-4-train', 'BNCI2014_004-train', 'BNCI2014_004-test',
                       'WBCIC-SHU-3C']
+
     dct = pd.DataFrame(columns=['dataset', 'avg', 'std', 's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13'])
 
     if data_name in data_name_list:
@@ -375,13 +464,14 @@ if __name__ == '__main__':
         # whether to use pretrained model
         # if source models have not been trained, set use_pretrained_model to False to train them
         # alternatively, run dnn.py to train source models, in seperating the steps
+        # use_pretrained_model = True
         if use_pretrained_model:
             # no training
             max_epoch = 0
         else:
             # training epochs
             max_epoch = epoch
-
+        
         # learning rate
         lr = lr
 
@@ -397,6 +487,9 @@ if __name__ == '__main__':
         # whether to use EA
         align = align
 
+        # temperature rescaling, for test entropy calculation
+        t = 2
+
         # whether to test balanced or imbalanced (2:1) target subject
         balanced = True
 
@@ -411,13 +504,13 @@ if __name__ == '__main__':
         if momentum:
             print('momentum: {}, momentum_param: {}'.format(momentum, momentum_param))
 
-        args = argparse.Namespace(feature_deep_dim=feature_deep_dim, align=align, lr=lr, max_epoch=max_epoch,
+        args = argparse.Namespace(feature_deep_dim=feature_deep_dim, align=align, lr=lr, t=t, max_epoch=max_epoch,
                                   trial_num=trial_num, time_sample_num=time_sample_num, sample_rate=sample_rate,
                                   N=N, chn=chn, class_num=class_num, stride=stride, steps=steps, calc_time=calc_time,
-                                  paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced, data_path_MI = data_path_MI,
-                                  finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param)
+                                  paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced,
+                                  data_path_MI = data_path_MI,finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param)
 
-        args.method = 'proposed_method'
+        args.method = 'T-TIME'
         args.backbone = backbone
 
         args.epoch = epoch
@@ -427,7 +520,7 @@ if __name__ == '__main__':
 
         # path for saving the offline models
         args.param_runs = param_runs
-        args.runs_path = str(args.param_runs)  + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)
+        args.runs_path = str(args.param_runs) + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)
 
         # GPU device id
         try:
@@ -436,26 +529,6 @@ if __name__ == '__main__':
             args.data_env = 'gpu' if torch.cuda.device_count() != 0 else 'local'
         except:
             args.data_env = 'local'
-
-        # hyperparameters for rotta
-        args.paras_optim = Box({
-            "name": "Adam",   
-            "lr": args.lr_online,
-            "beta": 0.9,        
-            "wd": 0.0,
-        })
-        args.capacity = 64
-        args.bn_alpha = 0.2
-        args.update_frequency = 64
-        args.update_counter = 'each'
-        args.confidence_threshold = 0.33
-        args.uncertainty_threshold = 0.66
-        args.prune_ratio = 0.5
-        args.pruning_strategy = 'ln_structured'
-        args.pruning_module = 'conv'
-        args.metric_name = 'consistency'
-        args.use_BN = use_BN
-
         total_acc = []
 
         # update multiple models, independently, from the source models
@@ -479,7 +552,7 @@ if __name__ == '__main__':
 
             sub_acc_all = np.zeros(N)
             for idt in range(N):
-                fix_random_seed(args.SEED)  # fix the seed
+                fix_random_seed(args.SEED)  # fix the seed, the seed isn't fixed completely in the original code (this may be related to the python and cuda version)
                 args.idt = idt
                 source_str = 'Except_S' + str(idt)
                 target_str = 'S' + str(idt)

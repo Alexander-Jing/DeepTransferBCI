@@ -1,6 +1,7 @@
 import random
 import numpy as np
 from easydict import EasyDict as edict
+import torch
 
 
 class MemoryItem:
@@ -69,6 +70,12 @@ class DropMemoryBank:
         x, prediction, uncertainty, confidence = instance['data'], instance['prediction'], instance['uncertainty'], \
             instance['confidence']
         new_item = MemoryItem(data=x, uncertainty=uncertainty, age=1)
+
+        # check if this data already exists in memory
+        for _class in range(self.num_class):
+            if any(torch.equal(item.data, x) for item in self.data[_class]): 
+                print("the item predicted as {} already stored in the memory bank for class {}".format(prediction,_class))
+                return True
 
         if self.get_occupancy() < self.capacity:
             self.data[prediction].append(new_item)

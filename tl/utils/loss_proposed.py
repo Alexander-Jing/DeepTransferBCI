@@ -1,0 +1,124 @@
+import torch
+import torch.nn as nn
+
+
+def _entropy(logits):
+    probs = logits.softmax(1)
+    entropy = -probs * torch.log(probs + 1e-6)
+    entropy = entropy.sum(1)
+    return entropy.mean()
+
+
+def _marginal_entropy(logits):
+    probs = logits.softmax(1)
+    marginal_probs = probs.mean(0)
+    # return uniform loss
+    return -(marginal_probs * (marginal_probs + 1e-6).log()).sum()
+
+
+def _neg_mutual_information(logits):
+    return _entropy(logits) - _marginal_entropy(logits)
+
+
+def _neg_weighted_mutual_information(logits, lambda_info):
+    return lambda_info * _entropy(logits) - _marginal_entropy(logits)
+
+
+def _neg_weighted_mutual_information_on_marginal(logits, lambda_info):
+    return _entropy(logits) - lambda_info * _marginal_entropy(logits)
+
+
+class MarginalEntropy(torch.nn.Module):
+    def forward(self, logits):
+        return _marginal_entropy(logits)
+
+
+class Entropy(torch.nn.Module):
+    def forward(self, logits):
+        return _entropy(logits)
+
+
+class NegMutualInformation(torch.nn.Module):
+    def forward(self, logits):
+        return _neg_mutual_information(logits)
+
+
+class NegWeightedMutualInformation(torch.nn.Module):
+    def __init__(self, lambda_info):
+        super().__init__()
+        self.lambda_info = lambda_info
+
+    def forward(self, logits):
+        return _neg_weighted_mutual_information(logits, self.lambda_info)
+
+
+class NegWeightedMutualInformation_on_marginal(torch.nn.Module):
+    def __init__(self, lambda_info):
+        super().__init__()
+        self.lambda_info = lambda_info
+
+    def forward(self, logits):
+        return _neg_weighted_mutual_information_on_marginal(logits, self.lambda_info)
+    
+
+class SelectiveSoftplusEnergyAlignment(nn.Module):
+    def __init__(self, ratio=0.5, temp=1.0):
+        super().__init__()
+        self.ratio = ratio    # Proportion of low-energy samples to select
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+
+    def forward(self, logits):
+        """
+        Args:
+            logits: Model output tensor with shape [batch_size, num_classes]
+        Returns:
+            Alignment loss scalar (retains gradient for backpropagation)
+        """
+        # 1. Compute energy scores: lower values indicate higher prediction confidence
+        energy = -self.temp * torch.logsumexp(logits / self.temp, dim=1)  # [batch_size]
+        
+        # 2. Sort energies (detached to prevent gradient flow through sorting)
+        sorted_energy, _ = energy.detach().sort()
+        
+        # 3. Select top-k low-energy samples as source domain proxy
+        num_chunks = int(1 / self.ratio)
+        low_energy_chunk = torch.chunk(sorted_energy, num_chunks)[0]  # First ratio% samples
+        src_energy_approx = low_energy_chunk.mean()  # Reference energy level
+        
+        # 4. Compute deviation from reference and apply Softplus
+        diff = energy - src_energy_approx  # Gradient-preserving difference
+        loss = self.softplus(diff).mean()  # Aggregate batch loss
+        
+        return loss
+    
+class MemorySoftplusEnergyAlignment(nn.Module):
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+
+
+    def forward(self, logits, preds_of_pre_source_data):
+        """
+        Args:
+            logits: Model output tensor with shape [batch_size, num_classes]
+        Returns:
+            Alignment loss scalar (retains gradient for backpropagation)
+        """
+        # Compute energy scores: lower values indicate higher prediction confidence
+        energy = -self.temp * torch.logsumexp(logits / self.temp, dim=1)  # [batch_size]
+        # the presudo source energy
+        energy_preds_of_pre_source_data = -self.temp * torch.logsumexp(preds_of_pre_source_data / self.temp, dim=1)  # [batch_size]
+        src_energy_approx = energy_preds_of_pre_source_data.detach()  # Reference energy level
+        
+        # Compute deviation from reference and apply Softplus
+        diff = energy - src_energy_approx.mean() # Gradient-preserving difference
+        loss = self.softplus(diff).mean()  # Aggregate batch loss
+        
+        # with the entropy loss
+        loss_sum = self.lambda_1 * _entropy(logits) + self.lambda_2 * loss
+        
+        return  loss_sum

@@ -14,9 +14,9 @@ from torch.nn.utils import prune
 from easydict import EasyDict as edict
 
 # from robustbench.model_zoo.architectures.utils_architectures import normalize_model, ImageNormalizer
-from tl.utils.memory_motta import DropMemoryBank
-from tl.utils.loss_motta import NegWeightedMutualInformation_on_marginal
-from tl.utils.optimizer_motta import build_optimizer
+from tl.utils.memory_proposed import DropMemoryBank
+from tl.utils.loss_proposed import MemorySoftplusEnergyAlignment
+from tl.utils.optimizer_proposed import build_optimizer
 
 pruning_methods = {
     "l1_unstructured": prune.l1_unstructured,
@@ -30,9 +30,9 @@ class proposed_TTA(nn.Module):
     def __init__(self, model, paras_optim, capacity, num_classes, bn_alpha, temp_factor,
                  update_frequency, confidence_threshold, uncertainty_threshold, prune_ratio, arch, dataset,
                  enable_robustBN, loss_name, paras_loss, steps=1,
-                 episodic=False, memory_bank_type='uhus', freeze_top=True, use_buffer=True, fix_pruning_model=True,
+                 episodic=False, memory_bank_type='uhus', use_BN=False, use_buffer=True, fix_pruning_model=True,
                  pruning_strategy='l1_unstructured', pruning_module='conv', calculate_selection_mask=False,
-                 category_uniform=True, record=False, metric_name='pruning_logit_norm_change', update_counter='each', return_type='xy', num_dropout=10):
+                 category_uniform=True, record=False, metric_name='consistency', update_counter='each', return_type='xy', num_dropout=20, presudo_src=True):
 
         super().__init__()
         self.model = model
@@ -56,6 +56,7 @@ class proposed_TTA(nn.Module):
         self.return_type = return_type
         self.num_dropout = num_dropout
         self.dropout_p = 0.25
+        self.presudo_src = presudo_src
 
         # memory
         self.memory = DropMemoryBank(capacity, num_classes, confidence_threshold, uncertainty_threshold,
@@ -64,11 +65,12 @@ class proposed_TTA(nn.Module):
         self.memory_copy = deepcopy(self.memory)
 
         # loss function
-        self.loss_fn = NegWeightedMutualInformation_on_marginal(0.)
+        self.loss_fn = MemorySoftplusEnergyAlignment(lambda_1=1.0, lambda_2=1.0, temp=1.0)
 
         # optimizer
-        self.configure_model()
-        params, param_names = self.collect_params(freeze_top=freeze_top)
+        if use_BN:
+            self.configure_model()
+        params, param_names = self.collect_params(use_bn=use_BN)
         self.optimizer = build_optimizer(params, paras_optim)
         try:
             self.optimizer.set_model(self.model)
@@ -79,10 +81,6 @@ class proposed_TTA(nn.Module):
         self.model_state, self.optimizer_state = deepcopy(model.state_dict()), deepcopy(self.optimizer.state_dict())
         assert steps > 0, "tent requires >= 1 step(s) to forward and update"
 
-        self.fix_pruning_model = fix_pruning_model
-        self.pruning_strategy = pruning_strategy
-        self.pruning_module = pruning_module
-        self.init_pruning(model, arch, dataset, prune_ratio)
 
         self.initial_weights = {name: param.clone().detach() for name, param in model.named_parameters() if
                                 param.requires_grad}
@@ -91,6 +89,7 @@ class proposed_TTA(nn.Module):
         self.use_buffer = use_buffer
         self.calculate_selection_mask = calculate_selection_mask
         self.selection_mask = []
+        self.online_buffer = []
 
         if record:
             self.record = {}
@@ -116,7 +115,7 @@ class proposed_TTA(nn.Module):
                     module.weight.requires_grad_(True)
                     module.bias.requires_grad_(True)
 
-    def collect_params(self, freeze_top=False):
+    def collect_params(self, use_bn=True):
         """Collect the affine scale + shift parameters from norm layers.
         Walk the model's modules and collect all normalization parameters.
         Return the parameters and their names.
@@ -126,26 +125,16 @@ class proposed_TTA(nn.Module):
         params = []
         names = []
         for nm, m in model.named_modules():
-            # skip top layers for adaptation: layer4 for ResNets and blocks9-11 for Vit-Base
-            if freeze_top:
-                if 'layer4' in nm:
-                    continue
-                if 'blocks.9' in nm:
-                    continue
-                if 'blocks.10' in nm:
-                    continue
-                if 'blocks.11' in nm:
-                    continue
-                if 'norm.' in nm:
-                    continue
-                if nm in ['norm']:
-                    continue
-
-            if isinstance(m, (nn.BatchNorm2d, nn.LayerNorm, nn.GroupNorm)):
+            if use_bn:
+                if isinstance(m, (nn.BatchNorm2d, nn.LayerNorm, nn.GroupNorm)):
+                    for np, p in m.named_parameters():
+                        if np in ['weight', 'bias']:  # weight is scale, bias is shift
+                            params.append(p)
+                            names.append(f"{nm}.{np}")
+            else:
                 for np, p in m.named_parameters():
-                    if np in ['weight', 'bias']:  # weight is scale, bias is shift
-                        params.append(p)
-                        names.append(f"{nm}.{np}")
+                    params.append(p)
+                    names.append(f"{nm}.{np}")
 
         return params, names
 
@@ -167,17 +156,16 @@ class proposed_TTA(nn.Module):
             prob = torch.softmax(out, dim=1)
             pseudo_label = torch.argmax(prob, dim=1)
             pseudo_conf = torch.max(prob, dim=1)[0]
-            prune_result = self.eval_dropout(x, out, prob, pseudo_label)
+            dropout_result = self.eval_dropout(x, out, prob, pseudo_label)
 
-            metric = prune_result[self.metric_name]
+            metric = dropout_result[self.metric_name]
 
             if self.record is not None:
-                self.record = prune_result
+                self.record = dropout_result
                 self.record['pseudo_conf'] = pseudo_conf
 
         # update memory
         update_model_flag = False
-        filtered_data = []
         for i, data in enumerate(x):
 
             p_l = pseudo_label[i].item()
@@ -186,14 +174,13 @@ class proposed_TTA(nn.Module):
             current_instance = edict(data=data.cpu(), prediction=p_l, uncertainty=uncertainty,
                                      confidence=conf)
 
-            self.memory.add_instance(current_instance) # the memory bank will be used for filtering 
-
-            if (not self.use_buffer) and conf >= self.confidence_threshold and metric[
-                i].item() <= self.uncertainty_threshold:
-                filtered_data.append(data.cpu())
+            if self.use_buffer and conf >= self.confidence_threshold and metric[
+                i].item() >= self.uncertainty_threshold:
+                self.memory.add_instance(current_instance) # the memory bank will be used for filtering 
 
             if self.update_counter == 'each':
                 self.num_instance += 1
+                self.online_buffer.append(data)
             else:
                 if conf >= self.confidence_threshold and metric[i].item() <= self.uncertainty_threshold:
                     self.num_instance += 1
@@ -204,24 +191,28 @@ class proposed_TTA(nn.Module):
         # update model
         if update_model_flag:
             for _ in range(self.steps):
-                self.update_model(filtered_data)
+                self.update_model(self.online_buffer)
+            self.online_buffer = []
 
         # return outputs
         return dict(logits=out)
 
     @torch.enable_grad()
-    def update_model(self, filtered_data):
+    def update_model(self, batch_data):
         loss_fn = self.loss_fn
 
-        if getattr(self, 'use_buffer', False):
-            sup_data, sup_uncertainty = self.memory.get_memory() # use the filtered data from memory
-        else:
-            sup_data = filtered_data
+        # prepare the data from current batch and memory
+        pre_source_data, pre_source_uncertainty = self.memory.get_memory() # use the filtered data from memory
+        sup_data = batch_data
 
         if len(sup_data) > 0:
+            
+            # prepare the data from current batch and memory
             sup_data = torch.stack(sup_data)
             # sup_data = sup_data.to(self.device, non_blocking=True)
             sup_data = sup_data.cuda(non_blocking=True)
+            pre_source_data = torch.stack(pre_source_data)
+            pre_source_data = pre_source_data.cuda(non_blocking=True)
 
             self.model.train()
 
@@ -231,7 +222,11 @@ class proposed_TTA(nn.Module):
                 self.optimizer.step()
             elif self.paras_optim['name'] == 'SAM':
 
-                preds_of_data = self.model(sup_data)
+                if self.return_type=='xy':
+                    _, preds_of_data = self.model(sup_data)
+                elif self.return_type == 'y':
+                    preds_of_data = self.model(sup_data)
+                
                 loss_first = loss_fn(preds_of_data)
 
                 self.optimizer.zero_grad()
@@ -241,7 +236,10 @@ class proposed_TTA(nn.Module):
                 # compute \hat{\epsilon(\Theta)} for first order approximation, Eqn. (4)
                 self.optimizer.first_step(zero_grad=True)
 
-                preds_of_data = self.model(sup_data)
+                if self.return_type=='xy':
+                    _, preds_of_data = self.model(sup_data)
+                elif self.return_type == 'y':
+                    preds_of_data = self.model(sup_data)
 
                 # second time backward, update model weights using gradients at \Theta+\hat{\epsilon(\Theta)}
                 loss_second = loss_fn(preds_of_data)
@@ -249,9 +247,40 @@ class proposed_TTA(nn.Module):
                 loss_second.backward()
 
                 self.optimizer.second_step(zero_grad=True)
+            
+            elif self.paras_optim['name'] == 'Adam':
+                
+                if self.presudo_src:
 
-            if not self.fix_pruning_model:
-                update_pruned_model(self.feature_extractor, self.feature_extractor_prune)
+                    if self.return_type=='xy':
+                        _, preds_of_pre_source_data = self.model(pre_source_data)
+                        _, preds_of_data = self.model(sup_data)
+                    elif self.return_type == 'y':
+                        preds_of_pre_source_data = self.model(pre_source_data)
+                        preds_of_data = self.model(sup_data)
+                    
+                    loss = loss_fn(preds_of_data, preds_of_pre_source_data)
+
+                    self.optimizer.zero_grad()
+
+                    loss.backward()
+
+                    self.optimizer.step()
+                else:
+
+                    if self.return_type=='xy':
+                        _, preds_of_data = self.model(sup_data)
+                    elif self.return_type == 'y':
+                        preds_of_data = self.model(sup_data)
+                    loss = loss_fn(preds_of_data)
+
+                    self.optimizer.zero_grad()
+
+                    loss.backward()
+
+                    self.optimizer.step()
+
+
 
     def check_updates(self):
         is_update = is_updated(self.feature_extractor, self.feature_extractor_init)
