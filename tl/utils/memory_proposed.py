@@ -2,8 +2,10 @@ import random
 import numpy as np
 from easydict import EasyDict as edict
 import torch
+from collections import deque
+import threading
 
-
+# the memory buffer for the presudo source
 class MemoryItem:
     def __init__(self, data=None, uncertainty=0, age=0):
         self.data = data
@@ -116,3 +118,44 @@ class DropMemoryBank:
                 tmp_uncertainty.append(item.uncertainty)
 
         return tmp_data, tmp_uncertainty
+    
+# the buffer for storing the batch based data
+class OnlineBuffer:
+    def __init__(self, buffer_size: int):
+        """
+        Initializes a fixed-size FIFO buffer for streaming data.
+        
+        Args:
+            buffer_size: Maximum capacity of the buffer (number of data samples)
+        """
+        self.buffer_size = buffer_size
+        self.buffer = deque(maxlen=buffer_size)  # FIFO queue that automatically discards old data
+        self.lock = threading.Lock()  # Thread safety lock
+
+    def add_data(self, data: torch.Tensor) -> None:
+        """
+        Adds new data to the buffer (automatically discards oldest data if full)
+        
+        Args:
+            data: Tensor data to add (supports arbitrary dimensions)
+        """
+        with self.lock:  # Ensures thread-safe operation
+            # Store detached clone to prevent interference with original data
+            self.buffer.append(data.detach().clone())
+
+    def get_data(self) -> torch.Tensor:
+        """
+        Retrieves all current data from the buffer as a stacked tensor.
+        
+        Returns:
+            stacked_data: Tensor with shape [N, ...] where N is current data count
+        """
+        with self.lock:
+            if not self.buffer:
+                return torch.tensor([])  # Return empty tensor if buffer is empty
+            # Concatenate all tensors along new dimension (dim=0)
+            return tuple(self.buffer)
+
+    def size(self) -> int:
+        """Returns current number of data samples in the buffer"""
+        return len(self.buffer)

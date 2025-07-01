@@ -8,6 +8,11 @@ def _entropy(logits):
     entropy = entropy.sum(1)
     return entropy.mean()
 
+def _mdr(logits):
+    probs = logits.softmax(1)
+    msoftmax = probs.mean(dim=0)
+    MDR_loss = torch.sum(msoftmax * torch.log(msoftmax + 1e-5))
+    return MDR_loss
 
 def _marginal_entropy(logits):
     probs = logits.softmax(1)
@@ -120,5 +125,20 @@ class MemorySoftplusEnergyAlignment(nn.Module):
         
         # with the entropy loss
         loss_sum = self.lambda_1 * _entropy(logits) + self.lambda_2 * loss
+        
+        return  loss_sum
+    
+class CE_MDR(nn.Module):
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+
+
+    def forward(self, logits):
+        
+        loss_sum = self.lambda_1 * _entropy(logits) + self.lambda_2 * _mdr(logits)
         
         return  loss_sum

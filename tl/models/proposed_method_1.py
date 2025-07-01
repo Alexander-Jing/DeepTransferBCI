@@ -193,14 +193,63 @@ class proposed_TTA(nn.Module):
             if self.num_instance >= self.batch_size_online and self.num_instance % self.update_frequency == 0:
                 update_model_flag = True
 
-        # update model
-        if update_model_flag:
-            for _ in range(self.steps):
-                self.update_model(self.online_buffer.get_data(), sqrtRefEA)
-
         # return outputs
         return dict(logits=out)
+    
+    @torch.enable_grad()
+    def update_model(self, sup_data):
+        
+        loss_fn = self.loss_fn
 
+        self.model.train()
+
+        if self.paras_optim['name'] == 'GAM':
+            self.optimizer.set_unsup_closure(loss_fn, sup_data)
+
+            self.optimizer.step()
+        elif self.paras_optim['name'] == 'SAM':
+
+            if self.return_type=='xy':
+                _, preds_of_data = self.model(sup_data)
+            elif self.return_type == 'y':
+                preds_of_data = self.model(sup_data)
+            
+            loss_first = loss_fn(preds_of_data)
+
+            self.optimizer.zero_grad()
+
+            loss_first.backward()
+
+            # compute \hat{\epsilon(\Theta)} for first order approximation, Eqn. (4)
+            self.optimizer.first_step(zero_grad=True)
+
+            if self.return_type=='xy':
+                _, preds_of_data = self.model(sup_data)
+            elif self.return_type == 'y':
+                preds_of_data = self.model(sup_data)
+
+            # second time backward, update model weights using gradients at \Theta+\hat{\epsilon(\Theta)}
+            loss_second = loss_fn(preds_of_data)
+
+            loss_second.backward()
+
+            self.optimizer.second_step(zero_grad=True)
+        
+        elif self.paras_optim['name'] == 'Adam':
+            
+            if self.return_type=='xy':
+                _, preds_of_data = self.model(sup_data)
+            elif self.return_type == 'y':
+                preds_of_data = self.model(sup_data)
+            loss = loss_fn(preds_of_data)
+
+            self.optimizer.zero_grad()
+
+            loss.backward()
+
+            self.optimizer.step()
+
+    """
     @torch.enable_grad()
     def update_model(self, batch_data, sqrtRefEA):
         loss_fn = self.loss_fn
@@ -291,6 +340,7 @@ class proposed_TTA(nn.Module):
                     loss.backward()
 
                     self.optimizer.step()
+    """
 
 
 

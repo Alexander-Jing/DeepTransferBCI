@@ -15,7 +15,7 @@ from tl.utils.dataloader import read_mi_combine_tar
 from tl.utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist, build_optimizer
 from tl.utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
-from tl.models.proposed_method import proposed_TTA
+from tl.models.proposed_method_1 import proposed_TTA
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 import gc
@@ -50,7 +50,7 @@ def motta_func(loader, model, args, balanced=True):
                         update_frequency=args.update_frequency, update_counter=args.update_counter, EnergyAlignment = args.EnergyAlignment,
                         confidence_threshold=args.confidence_threshold, uncertainty_threshold=args.uncertainty_threshold, prune_ratio=args.prune_ratio, pruning_strategy=args.pruning_strategy,
                         pruning_module=args.pruning_module, metric_name=args.metric_name, arch=args.backbone, use_BN=args.use_BN,
-                        dataset=args.data_name, enable_robustBN=False, loss_name='MemorySoftplusEnergyAlignment', paras_loss={"lambda_info": 0.}, batch_size_online=args.test_batch)
+                        dataset=args.data_name, enable_robustBN=False, loss_name='CE_MDR', paras_loss={"lambda_info": 0.}, presudo_src=False, batch_size_online=args.test_batch)
     proposed_TTA_model.cuda()
 
     # loop through test data stream one by one
@@ -74,8 +74,10 @@ def motta_func(loader, model, args, balanced=True):
 
             if i == 0:
                 sample_test = data_cum.reshape(args.chn, args.time_sample_num)
+                sample_test_origin = data_cum.reshape(args.chn, args.time_sample_num)
             else:
                 sample_test = data_cum[i].reshape(args.chn, args.time_sample_num)
+                sample_test_origin = data_cum[i].reshape(args.chn, args.time_sample_num)
             # update reference matrix
             R = EA_online(sample_test, R, i)
 
@@ -87,16 +89,18 @@ def motta_func(loader, model, args, balanced=True):
             if args.calc_time:
                 print('sample ', str(i), ', pre-inference IEA finished time in ms:', np.round((EA_time - start_time) * 1000, 3))
             sample_test = sample_test.reshape(1, 1, args.chn, args.time_sample_num)
+            sample_test_origin = sample_test_origin.reshape(1, 1, args.chn, args.time_sample_num)
         else:
             sample_test = data_cum[i].numpy()
             sample_test = sample_test.reshape(1, 1, sample_test.shape[1], sample_test.shape[2])
+            sample_test_origin = sample_test_origin.reshape(1, 1, sample_test.shape[1], sample_test.shape[2])
 
         if args.data_env != 'local':
             sample_test = torch.from_numpy(sample_test).to(torch.float32).cuda()
         else:
             sample_test = torch.from_numpy(sample_test).to(torch.float32)
 
-        outputs = proposed_TTA_model(sample_test)["logits"]
+        outputs = proposed_TTA_model(sample_test, sample_test_origin, sqrtRefEA)["logits"]
 
         softmax_out = nn.Softmax(dim=1)(outputs)
 
@@ -106,7 +110,26 @@ def motta_func(loader, model, args, balanced=True):
 
         y_pred.append(softmax_out.detach().cpu().numpy())
         y_true.append(labels.item())
+        
+        #################### Phase 2: target model update ####################
+        if (i + 1) >= args.test_batch and (i + 1) % args.stride == 0:
+            
+            if args.align:
+                batch_test = np.copy(data_cum[i - args.test_batch + 1:i + 1])
+                # transform test batch
+                batch_test = np.dot(sqrtRefEA, batch_test)
+                batch_test = np.transpose(batch_test, (1, 2, 0, 3))
+            else:
+                batch_test = data_cum[i - args.test_batch + 1:i + 1].numpy()
+                batch_test = batch_test.reshape(args.test_batch, 1, batch_test.shape[2], batch_test.shape[3])
 
+            if args.data_env != 'local':
+                batch_test = torch.from_numpy(batch_test).to(torch.float32).cuda()
+            else:
+                batch_test = torch.from_numpy(batch_test).to(torch.float32)
+        
+            proposed_TTA_model.update_model(batch_test)
+            
     if balanced:
         _, predict = torch.max(torch.from_numpy(np.array(y_pred)).to(torch.float32).reshape(-1, args.class_num), 1)
         pred = torch.squeeze(predict).float()

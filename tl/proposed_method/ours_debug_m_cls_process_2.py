@@ -444,7 +444,7 @@ if __name__ == '__main__':
             "wd": 0.0,
         })
         args.EnergyAlignment = Box({
-            "lambda_1": 1.0,
+            "lambda_1": 0.0,
             "lambda_2": 1.0,
             "temp": 1.0,
         })

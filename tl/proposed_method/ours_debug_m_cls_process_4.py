@@ -50,7 +50,7 @@ def motta_func(loader, model, args, balanced=True):
                         update_frequency=args.update_frequency, update_counter=args.update_counter, EnergyAlignment = args.EnergyAlignment,
                         confidence_threshold=args.confidence_threshold, uncertainty_threshold=args.uncertainty_threshold, prune_ratio=args.prune_ratio, pruning_strategy=args.pruning_strategy,
                         pruning_module=args.pruning_module, metric_name=args.metric_name, arch=args.backbone, use_BN=args.use_BN,
-                        dataset=args.data_name, enable_robustBN=False, loss_name='MemorySoftplusEnergyAlignment', paras_loss={"lambda_info": 0.}, batch_size_online=args.test_batch)
+                        dataset=args.data_name, enable_robustBN=False, loss_name='CE_MDR', paras_loss={"lambda_info": 0.}, presudo_src=False, batch_size_online=args.test_batch)
     proposed_TTA_model.cuda()
 
     # loop through test data stream one by one
@@ -74,8 +74,10 @@ def motta_func(loader, model, args, balanced=True):
 
             if i == 0:
                 sample_test = data_cum.reshape(args.chn, args.time_sample_num)
+                sample_test_origin = data_cum.reshape(args.chn, args.time_sample_num)
             else:
                 sample_test = data_cum[i].reshape(args.chn, args.time_sample_num)
+                sample_test_origin = data_cum[i].reshape(args.chn, args.time_sample_num)
             # update reference matrix
             R = EA_online(sample_test, R, i)
 
@@ -87,16 +89,18 @@ def motta_func(loader, model, args, balanced=True):
             if args.calc_time:
                 print('sample ', str(i), ', pre-inference IEA finished time in ms:', np.round((EA_time - start_time) * 1000, 3))
             sample_test = sample_test.reshape(1, 1, args.chn, args.time_sample_num)
+            sample_test_origin = sample_test_origin.reshape(1, 1, args.chn, args.time_sample_num)
         else:
             sample_test = data_cum[i].numpy()
             sample_test = sample_test.reshape(1, 1, sample_test.shape[1], sample_test.shape[2])
+            sample_test_origin = sample_test_origin.reshape(1, 1, sample_test.shape[1], sample_test.shape[2])
 
         if args.data_env != 'local':
             sample_test = torch.from_numpy(sample_test).to(torch.float32).cuda()
         else:
             sample_test = torch.from_numpy(sample_test).to(torch.float32)
 
-        outputs = proposed_TTA_model(sample_test)["logits"]
+        outputs = proposed_TTA_model(sample_test, sample_test_origin, sqrtRefEA)["logits"]
 
         softmax_out = nn.Softmax(dim=1)(outputs)
 
@@ -106,7 +110,7 @@ def motta_func(loader, model, args, balanced=True):
 
         y_pred.append(softmax_out.detach().cpu().numpy())
         y_true.append(labels.item())
-
+        
     if balanced:
         _, predict = torch.max(torch.from_numpy(np.array(y_pred)).to(torch.float32).reshape(-1, args.class_num), 1)
         pred = torch.squeeze(predict).float()
