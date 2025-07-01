@@ -449,11 +449,11 @@ if __name__ == '__main__':
         })
         args.EnergyAlignment = Box({
             "lambda_1": 1.0,
-            "lambda_2": 1.0,
+            "lambda_2": 0.0,
             "temp": 1.0,
         })
         args.capacity = 64
-        args.bn_alpha = 0.001
+        args.bn_alpha = 0.1
         args.update_frequency = args.stride
         args.update_counter = 'each'
         args.confidence_threshold = 0.33

@@ -190,7 +190,8 @@ class proposed_TTA(nn.Module):
                 if conf >= self.confidence_threshold and metric[i].item() <= self.uncertainty_threshold:
                     self.num_instance += 1
 
-            if self.num_instance >= self.batch_size_online and self.num_instance % self.update_frequency == 0:
+            if self.memory.get_occupancy() >= self.capacity/2 and self.num_instance >= self.batch_size_online and self.num_instance % self.update_frequency == 0:
+                # if self.num_instance >= self.batch_size_online and self.num_instance % self.update_frequency == 0:
                 update_model_flag = True
 
         # update model

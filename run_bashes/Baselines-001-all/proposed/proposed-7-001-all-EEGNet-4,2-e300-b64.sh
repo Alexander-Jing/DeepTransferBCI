@@ -6,7 +6,7 @@ workspace_folder="/home/jyt/workspace/DeepTransferBCI"
 cd $workspace_folder
 
 # Define the program path
-progarm_path="tl/proposed_method/ours_debug_m_cls_process_2.py"
+progarm_path="tl/proposed_method/ours_debug_m_cls_process_5.py"
 
 # Set the PYTHONPATH environment variable
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
@@ -17,7 +17,7 @@ python3 $progarm_path \
   --data_save "True" \
   --data_path "./data/" \
   --data_path_MI "None" \
-  --log_path "./logs/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_1_BNOn_onlyEnergy_lr0.0001/" \
+  --log_path "./logs/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_1_BNoff_batch1stride1_onlyEntrophy_lr0.001/" \
   --use_pretrained_model "True" \
   --finetune "False" \
   --momentum "False" \
@@ -26,10 +26,10 @@ python3 $progarm_path \
   --align "True" \
   --batch_size "64" \
   --lr "0.001"  \
-  --lr_online "0.0001" \
+  --lr_online "0.001" \
   --epoch "300"  \
   --backbone "EEGNet-4,2" \
   --param_runs "./runs_debug/" \
-  --use_BN "True" \
-  --stride "64" \
-  --batch_size_online "64" \
+  --use_BN "False" \
+  --stride "1" \
+  --batch_size_online "1" \

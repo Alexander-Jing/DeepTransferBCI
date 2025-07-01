@@ -269,7 +269,7 @@
                 "--data_save", "True",
                 "--data_path", "./data/",
                 "--data_path_MI", "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/",
-                "--log_path", "./logs/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/",
+                "--log_path", "./logs/Baselines-001-test-e300-b64-debugs/debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/",
                 "--use_pretrained_model", "True",
                 "--finetune", "False",
                 "--momentum", "False",
@@ -283,8 +283,8 @@
                 "--backbone", "EEGNet-4,2",
                 "--param_runs", "./runs_debug/",
                 "--batch_size_online", "8",
-                "--stride", "1",
-                "--use_BN", "True",
+                "--stride", "8",
+                "--use_BN", "False",
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"

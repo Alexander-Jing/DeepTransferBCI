@@ -128,6 +128,37 @@ class MemorySoftplusEnergyAlignment(nn.Module):
         
         return  loss_sum
     
+class PresudoLabelMemorySoftplusEnergyAlignment(nn.Module):
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+
+
+    def forward(self, logits, preds_of_pre_source_data):
+        """
+        Args:
+            logits: Model output tensor with shape [batch_size, num_classes]
+        Returns:
+            Alignment loss scalar (retains gradient for backpropagation)
+        """
+        # Compute energy scores: lower values indicate higher prediction confidence
+        energy = -self.temp * torch.logsumexp(logits / self.temp, dim=1)  # [batch_size]
+        # the presudo source energy
+        energy_preds_of_pre_source_data = -self.temp * torch.logsumexp(preds_of_pre_source_data / self.temp, dim=1)  # [batch_size]
+        src_energy_approx = energy_preds_of_pre_source_data.detach()  # Reference energy level
+        
+        # Compute deviation from reference and apply Softplus
+        diff = energy - src_energy_approx.mean() # Gradient-preserving difference
+        loss = self.softplus(diff).mean()  # Aggregate batch loss
+        
+        # with the entropy loss
+        loss_sum = self.lambda_1 * _entropy(logits) + self.lambda_2 * loss
+        
+        return  loss_sum
+    
 class CE_MDR(nn.Module):
     def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0):
         super().__init__()
