@@ -449,7 +449,7 @@ if __name__ == '__main__':
         })
         args.EnergyAlignment = Box({
             "lambda_1": 1.0,
-            "lambda_2": 0.0,
+            "lambda_2": 1.0,
             "temp": 1.0,
         })
         args.capacity = 64
