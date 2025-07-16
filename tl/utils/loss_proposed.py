@@ -128,14 +128,111 @@ class MemorySoftplusEnergyAlignment(nn.Module):
         
         return  loss_sum
     
-class PresudoLabelMemorySoftplusEnergyAlignment(nn.Module):
-    def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0):
+class MemorySoftplusEnergyWeightedAlignment(nn.Module):
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0, epsilon=1e-8):
         super().__init__()
         self.temp = temp      # Temperature scaling factor
         self.softplus = nn.Softplus()  # Activation function for loss calculation
         self.lambda_1 = lambda_1
         self.lambda_2 = lambda_2
+        self.epsilon = epsilon
 
+    def forward(self, logits, preds_of_pre_source_data):
+        """
+        Args:
+            logits: Model output tensor with shape [batch_size, num_classes]
+        Returns:
+            Alignment loss scalar (retains gradient for backpropagation)
+        """
+        # Compute energy scores: lower values indicate higher prediction confidence
+        energy = -self.temp * torch.logsumexp(logits / self.temp, dim=1)  # [batch_size]
+        # the presudo source energy
+        energy_preds_of_pre_source_data = -self.temp * torch.logsumexp(preds_of_pre_source_data / self.temp, dim=1)  # [batch_size]
+        src_energy_approx = energy_preds_of_pre_source_data.detach().mean()  # Reference energy level
+        
+        # Compute deviation from reference and apply Softplus
+        diff = energy - src_energy_approx # Gradient-preserving difference
+
+        # calculate the entropy
+        probs = logits.softmax(1)
+        entropy = -probs * torch.log(probs + 1e-6)
+        entropy = entropy.sum(1)  # [batch_size]
+
+        # normalize the weight
+        weights = 1 / (torch.abs(diff.detach()) + self.epsilon)  # [batch_size]
+        weights = weights * len(weights) / weights.sum()  # [batch_size]
+
+        # weighted sum of loss
+        weighted_entropy = weights * entropy  # [batch_size]
+        entropy_loss = weighted_entropy.mean()
+
+        loss = entropy_loss
+        
+        return  loss
+
+class MemorySoftplusEnergyThresholdWeightedAlignment(nn.Module):
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0, epsilon=1e-8, threshold=0.5):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.epsilon = epsilon
+        self.threshold = threshold
+
+    def forward(self, logits, preds_of_pre_source_data):
+        """
+        Args:
+            logits: Model output tensor with shape [batch_size, num_classes]
+            preds_of_pre_source_data: Predictions from memory model [batch_size, num_classes]
+        Returns:
+            Alignment loss scalar (retains gradient for backpropagation)
+        """
+        # Compute energy scores: lower values indicate higher prediction confidence
+        energy = -self.temp * torch.logsumexp(logits / self.temp, dim=1)  # [batch_size]
+        energy_preds_of_pre_source_data = -self.temp * torch.logsumexp(preds_of_pre_source_data / self.temp, dim=1)  # [batch_size]
+        src_energy_approx = energy_preds_of_pre_source_data.detach().mean()  # Reference energy level
+        
+        # Compute entropy to measure prediction uncertainty
+        probs = logits.softmax(1)
+        entropy = -probs * torch.log(probs + 1e-6)
+        entropy = entropy.sum(1)  # [batch_size]
+        
+        # Create mask for low-entropy samples (entropy < threshold)
+        low_entropy_mask = entropy < self.threshold
+        
+        # If no samples meet criteria, return zero loss with preserved gradients
+        if not torch.any(low_entropy_mask):
+            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+        
+        # Compute energy difference only for low-entropy samples
+        low_entropy_energy = energy[low_entropy_mask]
+        diff = low_entropy_energy - src_energy_approx  # [low_entropy_batch_size]
+        
+        # Calculate weights based on inverse magnitude of energy difference
+        # Detach weights to prevent second-order gradients
+        weights = 1 / (torch.abs(diff.detach()) + self.epsilon)  # [low_entropy_batch_size]
+        # Normalize weights to maintain scale consistency
+        weights = weights * len(weights) / weights.sum()  # [low_entropy_batch_size]
+
+        # Extract entropy values for low-entropy samples
+        low_entropy_entropy = entropy[low_entropy_mask]  # [low_entropy_batch_size]
+        
+        # Apply calculated weights to entropy values
+        weighted_entropy = weights * low_entropy_entropy
+        # Compute mean loss across selected samples
+        entropy_loss = weighted_entropy.mean()
+
+        return entropy_loss
+
+class PresudoLabelMemorySoftplusEnergyAlignment(nn.Module):
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
 
     def forward(self, logits, preds_of_pre_source_data):
         """
@@ -155,7 +252,7 @@ class PresudoLabelMemorySoftplusEnergyAlignment(nn.Module):
         loss = self.softplus(diff).mean()  # Aggregate batch loss
         
         # with the entropy loss
-        loss_sum = self.lambda_1 * _entropy(logits) + self.lambda_2 * loss
+        loss_sum = self.lambda_1 * _entropy(logits) + self.lambda_2 * loss + self.lambda_3 * _mdr(logits)
         
         return  loss_sum
     
