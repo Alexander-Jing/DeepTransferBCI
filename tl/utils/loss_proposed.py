@@ -225,6 +225,56 @@ class MemorySoftplusEnergyThresholdWeightedAlignment(nn.Module):
 
         return entropy_loss
 
+class MemorySoftplusEnergyRatioSortedAlignment(nn.Module):
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0, epsilon=1e-8, ratio=0.5):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.epsilon = epsilon
+        self.ratio = ratio    # Ratio of low-entropy samples to select
+
+    def forward(self, logits, preds_of_pre_source_data):
+        """
+        Args:
+            logits: Model output tensor [batch_size, num_classes]
+            preds_of_pre_source_data: Memory predictions [batch_size, num_classes]
+        Returns:
+            Alignment loss scalar
+        """
+        # Compute energy scores
+        energy = -self.temp * torch.logsumexp(logits / self.temp, dim=1)
+        energy_preds = -self.temp * torch.logsumexp(preds_of_pre_source_data / self.temp, dim=1)
+        src_energy_approx = energy_preds.detach().mean()  # Reference energy
+        
+        # Compute entropy per sample
+        probs = logits.softmax(1)
+        entropy = -(probs * torch.log(probs + 1e-6)).sum(1)  # [batch_size]
+        batch_size = entropy.size(0)
+        
+        # Determine number of samples to select based on ratio
+        k = max(1, int(batch_size * self.ratio))  # At least 1 sample
+        if k >= batch_size:
+            selected_indices = torch.arange(batch_size, device=entropy.device)
+        else:
+            # Select indices with smallest entropy
+            _, selected_indices = torch.topk(entropy, k=k, largest=False)
+        
+        # Compute energy difference for selected samples
+        selected_energy = energy[selected_indices]
+        diff = selected_energy - src_energy_approx
+        
+        # Calculate adaptive weights
+        weights = 1 / (torch.abs(diff.detach()) + self.epsilon)
+        weights = weights * k / weights.sum()  # Normalize weights
+        
+        # Apply weights to selected entropy values
+        selected_entropy = entropy[selected_indices]
+        weighted_entropy = weights * selected_entropy
+        
+        return weighted_entropy.mean()
+
 class PresudoLabelMemorySoftplusEnergyAlignment(nn.Module):
     def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
         super().__init__()

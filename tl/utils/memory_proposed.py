@@ -111,13 +111,15 @@ class DropMemoryBank:
         tmp_data = []
         tmp_age = []
         tmp_uncertainty = []
-        for class_list in self.data:
+        tmp_class = []
+        for class_idx, class_list in enumerate(self.data):
             for item in class_list:
                 tmp_data.append(item.data)
                 tmp_age.append(item.age)
                 tmp_uncertainty.append(item.uncertainty)
+                tmp_class.append(class_idx)
 
-        return tmp_data, tmp_uncertainty
+        return tmp_data, tmp_uncertainty, tmp_class
     
 # the buffer for storing the batch based data
 class OnlineBuffer:
