@@ -198,7 +198,7 @@ class proposed_TTA(nn.Module):
             current_instance = edict(data=data.cpu(), prediction=p_l, uncertainty=uncertainty,
                                      confidence=conf)
 
-            if self.use_buffer and conf >= self.confidence_threshold and metric[
+            if self.use_buffer and metric[
                 i].item() >= self.uncertainty_threshold:
                 self.memory.add_instance(current_instance) # the memory bank will be used for filtering 
 
@@ -206,7 +206,7 @@ class proposed_TTA(nn.Module):
                 self.num_instance += 1
                 self.online_buffer.add_data(data)
             else:
-                if conf >= self.confidence_threshold and metric[i].item() <= self.uncertainty_threshold:
+                if metric[i].item() >= self.uncertainty_threshold:
                     self.num_instance += 1
 
             if self.memory.get_occupancy() >= self.capacity and self.num_instance >= self.batch_size_online and self.num_instance % self.update_frequency == 0:

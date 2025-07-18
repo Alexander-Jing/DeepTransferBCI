@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 def _entropy(logits):
@@ -170,6 +171,94 @@ class MemorySoftplusEnergyWeightedAlignment(nn.Module):
         
         return  loss
 
+class MemorySoftplusEnergyWeightedAlignmentMDR(nn.Module):
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0, epsilon=1e-8):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.epsilon = epsilon
+
+    def forward(self, logits, preds_of_pre_source_data):
+        """
+        Args:
+            logits: Model output tensor with shape [batch_size, num_classes]
+        Returns:
+            Alignment loss scalar (retains gradient for backpropagation)
+        """
+        # Compute energy scores: lower values indicate higher prediction confidence
+        energy = -self.temp * torch.logsumexp(logits / self.temp, dim=1)  # [batch_size]
+        # the presudo source energy
+        energy_preds_of_pre_source_data = -self.temp * torch.logsumexp(preds_of_pre_source_data / self.temp, dim=1)  # [batch_size]
+        src_energy_approx = energy_preds_of_pre_source_data.detach().mean()  # Reference energy level
+        
+        # Compute deviation from reference and apply Softplus
+        diff = energy - src_energy_approx # Gradient-preserving difference
+
+        # calculate the entropy
+        probs = logits.softmax(1)
+        entropy = -probs * torch.log(probs + 1e-6)
+        entropy = entropy.sum(1)  # [batch_size]
+
+        # normalize the weight
+        weights = 1 / (torch.abs(diff.detach()) + self.epsilon)  # [batch_size]
+        weights = weights * len(weights) / weights.sum()  # [batch_size]
+
+        # weighted sum of loss
+        weighted_entropy = weights * entropy  # [batch_size]
+        entropy_loss = weighted_entropy.mean()
+
+        loss = self.lambda_1 * entropy_loss + self.lambda_2 * _mdr(logits)
+        
+        return  loss
+
+class MemorySoftplusEnergyFeatureWeightedAlignment(nn.Module):
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0, epsilon=1e-8):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1  # Future use weight parameter
+        self.lambda_2 = lambda_2  # Future use weight parameter
+        self.epsilon = epsilon   # Numerical stability constant
+
+    def forward(self, logits, features, class_centers, missing_classes_flag):
+        """
+        Args:
+            logits: Model predictions [batch_size, num_classes]
+            features: Input data features [batch_size, feature_dim]
+            class_centers: Class prototype features [num_classes, feature_dim]
+        
+        Returns:
+            Weighted alignment loss scalar (with preserved gradients)
+        """
+        if missing_classes_flag:
+            return torch.tensor(0.0, requires_grad=True)
+
+        # Compute scaled probabilities with temperature, the entropy and presudo labels
+        scaled_probs = F.softmax(logits / self.temp, dim=1)
+        entropy = -torch.sum(scaled_probs * torch.log(scaled_probs + self.epsilon), dim=1)
+        pseudo_labels = torch.argmax(scaled_probs, dim=1)  # [batch_size]
+        
+        # Retrieve corresponding class centers for each sample
+        class_centers = class_centers[pseudo_labels]  # [batch_size, feature_dim]
+        
+        # Compute cosine similarity between features and class centers
+        # Normalize vectors to unit length for cosine calculation
+        normed_features = F.normalize(features, p=2, dim=1)
+        normed_centers = F.normalize(class_centers, p=2, dim=1)
+        # Compute cosine similarities [batch_size]
+        cos_similarities = torch.sum(normed_features * normed_centers, dim=1)
+        # Map similarity values from [-1, 1] to [0, 1] for weighting
+        alignment_weights = (cos_similarities + 1) / 2
+        
+        # Apply softplus to entropy and weight by alignment confidence
+        weighted_entropy = self.softplus(entropy) * alignment_weights
+        
+        # Compute final loss as mean across batch
+        loss = torch.mean(weighted_entropy)
+        
+        return loss
 class MemorySoftplusEnergyThresholdWeightedAlignment(nn.Module):
     def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0, epsilon=1e-8, threshold=0.5):
         super().__init__()
@@ -256,7 +345,7 @@ class MemorySoftplusEnergyRatioSortedAlignment(nn.Module):
         # Determine number of samples to select based on ratio
         k = max(1, int(batch_size * self.ratio))  # At least 1 sample
         if k >= batch_size:
-            selected_indices = torch.arange(batch_size, device=entropy.device)
+            selected_indices = torch.arange(batch_size)
         else:
             # Select indices with smallest entropy
             _, selected_indices = torch.topk(entropy, k=k, largest=False)

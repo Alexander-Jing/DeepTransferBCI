@@ -15,7 +15,7 @@ from tl.utils.dataloader import read_mi_combine_tar
 from tl.utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist, build_optimizer
 from tl.utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
-from tl.models.proposed_method_3 import proposed_TTA
+from tl.models.proposed_method_4 import proposed_TTA
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 import gc
@@ -459,7 +459,7 @@ if __name__ == '__main__':
         args.update_frequency = args.stride
         args.update_counter = 'each'
         args.confidence_threshold = 0.33
-        args.uncertainty_threshold = 0.66
+        args.uncertainty_threshold = 0.75
         args.prune_ratio = 0.5
         args.pruning_strategy = 'ln_structured'
         args.pruning_module = 'conv'
