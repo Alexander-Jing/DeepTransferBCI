@@ -34,6 +34,39 @@ def _neg_weighted_mutual_information_on_marginal(logits, lambda_info):
     return _entropy(logits) - lambda_info * _marginal_entropy(logits)
 
 
+def _calibrated_entropy(logits, gamma=1.0):
+    """
+    Computes the Calibrated Entropy Test-time Adaptation loss
+    
+    Args:
+        logits (torch.Tensor): Raw model outputs with shape (batch_size, num_classes)
+        gamma (float): Calibration hyperparameter controlling sensitivity to confidence difference
+    
+    Returns:
+        torch.Tensor: Calibrated entropy loss scalar
+    """
+    # Compute class probabilities from logits
+    probs = logits.softmax(1)  # Shape [B, C]
+    
+    # Calculate standard entropy per sample
+    entropy_elements = -probs * torch.log(probs + 1e-6)  # Avoid log(0) with small epsilon
+    sample_entropy = entropy_elements.sum(1)  # Shape [B]
+    
+    # Get highest (q_j) and second highest (q_k) probabilities
+    top2_probs = torch.topk(probs, k=2, dim=1).values  # Top-2 probabilities [B, 2]
+    q_j = top2_probs[:, 0]  # Max probability [B]
+    q_k = top2_probs[:, 1]  # Second max probability [B]
+    
+    # Compute per-sample calibration factor
+    delta = q_j - q_k  # Prediction confidence gap [B]
+    calibration_factor = 1 + delta ** gamma  # Eq.(3): 1 + (q_j - q_k)^γ
+    
+    # Apply calibration and compute final loss
+    calibrated_entropy = calibration_factor * sample_entropy  # [B]
+    loss = calibrated_entropy.mean()  # Batch mean reduction
+    
+    return loss
+
 class MarginalEntropy(torch.nn.Module):
     def forward(self, logits):
         return _marginal_entropy(logits)
@@ -407,5 +440,20 @@ class CE_MDR(nn.Module):
     def forward(self, logits):
         
         loss_sum = self.lambda_1 * _entropy(logits) + self.lambda_2 * _mdr(logits)
+        
+        return  loss_sum
+    
+class CaliE_MDR(nn.Module):
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+
+
+    def forward(self, logits):
+        
+        loss_sum = self.lambda_1 * _calibrated_entropy(logits,gamma=5) + self.lambda_2 * _mdr(logits)
         
         return  loss_sum

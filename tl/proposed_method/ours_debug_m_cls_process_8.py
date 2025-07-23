@@ -315,6 +315,7 @@ if __name__ == '__main__':
     parser.add_argument('--param_runs', type=str, default='./runs/', help='folder for saving the run paramters')
     parser.add_argument('--use_BN', type=str2bool, default=True, help='whether to only use BN adaptation')
     parser.add_argument('--loss_func', type=str, default="MemorySoftplusEnergyWeightedAlignment", help='the name of loss function')
+    parser.add_argument('--presudo_src', type=str2bool, default=False, help='whether need to use the presudo source')
     
     args = parser.parse_args()
 
@@ -340,6 +341,7 @@ if __name__ == '__main__':
     use_BN = args.use_BN
     stride = args.stride
     loss_func = args.loss_func
+    presudo_src = args.presudo_src
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -466,7 +468,7 @@ if __name__ == '__main__':
         args.metric_name = 'consistency'
         args.use_BN = use_BN
         args.loss_name = loss_func
-        args.presudo_src = True
+        args.presudo_src = presudo_src
 
         total_acc = []
 

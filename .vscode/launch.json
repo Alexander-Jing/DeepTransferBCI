@@ -285,7 +285,8 @@
                 "--batch_size_online", "8",
                 "--stride", "8",
                 "--use_BN", "False",
-                "--loss_func", "MemorySoftplusEnergyWeightedAlignmentMDR",
+                "--loss_func", "CaliE_MDR",
+                "--presudo_src", "False",
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"

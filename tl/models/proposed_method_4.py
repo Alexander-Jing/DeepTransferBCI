@@ -16,7 +16,7 @@ from easydict import EasyDict as edict
 # from robustbench.model_zoo.architectures.utils_architectures import normalize_model, ImageNormalizer
 from tl.utils.memory_proposed import DropMemoryBank, OnlineBuffer
 from tl.utils.loss_proposed import MemorySoftplusEnergyAlignment, CE_MDR, PresudoLabelMemorySoftplusEnergyAlignment, MemorySoftplusEnergyWeightedAlignment, \
-    MemorySoftplusEnergyRatioSortedAlignment, MemorySoftplusEnergyFeatureWeightedAlignment, MemorySoftplusEnergyWeightedAlignmentMDR
+    MemorySoftplusEnergyRatioSortedAlignment, MemorySoftplusEnergyFeatureWeightedAlignment, MemorySoftplusEnergyWeightedAlignmentMDR, CaliE_MDR
 from tl.utils.optimizer_proposed import build_optimizer
 
 pruning_methods = {
@@ -91,6 +91,8 @@ class proposed_TTA(nn.Module):
         elif loss_name == "MemorySoftplusEnergyWeightedAlignmentMDR":
             self.loss_fn = MemorySoftplusEnergyWeightedAlignmentMDR(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, 
                                                                      temp=EnergyAlignment.temp)
+        elif loss_name == 'CaliE_MDR':
+            self.loss_fn = CaliE_MDR(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, temp=EnergyAlignment.temp)
 
         # optimizer
         if use_BN:
@@ -209,10 +211,13 @@ class proposed_TTA(nn.Module):
                 if metric[i].item() >= self.uncertainty_threshold:
                     self.num_instance += 1
 
-            if self.memory.get_occupancy() >= self.capacity and self.num_instance >= self.batch_size_online and self.num_instance % self.update_frequency == 0:
-            # if self.num_instance >= self.batch_size_online and self.num_instance % self.update_frequency == 0:
-                update_model_flag = True
-
+            if self.presudo_src:
+                if self.memory.get_occupancy() >= self.capacity and self.num_instance >= self.batch_size_online and self.num_instance % self.update_frequency == 0:
+                    update_model_flag = True
+            else:
+                if self.num_instance >= self.batch_size_online and self.num_instance % self.update_frequency == 0:
+                    update_model_flag = True
+        
         # update model
         if update_model_flag:
             for _ in range(self.steps):
