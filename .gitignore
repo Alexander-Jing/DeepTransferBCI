@@ -145,3 +145,5 @@ runs/
 data/
 logs/
 runs*/
+
+visualization/visual_EnergyEntropy/

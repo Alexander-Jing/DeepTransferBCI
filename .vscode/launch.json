@@ -261,7 +261,7 @@
             "name": "Python: TTA-BCNI2014001-4-all-proposed",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_8.py",
+            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_11.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -285,8 +285,9 @@
                 "--batch_size_online", "8",
                 "--stride", "8",
                 "--use_BN", "False",
-                "--loss_func", "CaliE_MDR",
+                "--loss_func", "EnergyEntropy_selected_energy",
                 "--presudo_src", "False",
+                "--selection_ratio", "0.75",
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
@@ -378,6 +379,42 @@
                 "--visualfile_csv", "None", //"WBCIC-SHU-3C_Tent_seed_1_pred.csv",
                 "--visualfile_trial", "300",
                 "--visual_ensamble", "True",
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: Visualization for energy and entropy",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/visualization/energy_TTA.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "BNCI2014001-4-all",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--data_path_MI", "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/",
+                "--log_path", "./logs/Baselines-001-test-e300-b64-debugs/debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/",
+                "--use_pretrained_model", "True",
+                "--finetune", "False",
+                "--momentum", "False",
+                "--momentum_param", "0.5",
+                "--gpu_idx", "1",
+                "--align", "True",
+                "--batch_size", "64",
+                "--lr", "0.001",
+                "--lr_online", "0.001",
+                "--epoch", "300",
+                "--backbone", "EEGNet-4,2",
+                "--param_runs", "./runs_debug/",
+                "--batch_size_online", "8",
+                "--stride", "8",
+                "--use_BN", "False",
+                "--loss_func", "CaliE_KL",
+                "--presudo_src", "False",
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"

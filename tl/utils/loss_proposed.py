@@ -9,11 +9,53 @@ def _entropy(logits):
     entropy = entropy.sum(1)
     return entropy.mean()
 
+def _entropy_samples(logits):
+    probs = logits.softmax(dim=1)
+    entropy = -torch.sum(probs * torch.log(probs + 1e-5), dim=1)
+    return entropy
+
+def _energy_samples(logits):
+    energy = -torch.logsumexp(logits,dim=1)
+    return energy
+
 def _mdr(logits):
     probs = logits.softmax(1)
     msoftmax = probs.mean(dim=0)
     MDR_loss = torch.sum(msoftmax * torch.log(msoftmax + 1e-5))
     return MDR_loss
+
+def _kl_loss(logits):
+    probs = logits.softmax(1)
+    msoftmax = probs.mean(dim=0)
+    num_classes = logits.size(1)
+    uniform = torch.ones_like(msoftmax) * (1.0 / num_classes)
+    kl_loss = torch.sum(msoftmax * (torch.log(msoftmax + 1e-8) - torch.log(uniform + 1e-8)))
+    
+    return kl_loss
+
+
+def uniform_kl_loss(logits):
+    """
+    Calculate KL divergence between predicted distribution and uniform distribution per sample
+    Args:
+        logits: Raw model outputs, shape [batch_size, num_classes]
+    Returns:
+        kl_loss: Scalar loss value
+    """
+    # Get number of classes from logits dimension
+    num_classes = logits.size(1)
+    # Create uniform distribution vector [1/K, 1/K, ...]
+    uniform = torch.ones_like(logits) * (1.0 / num_classes)  # Shape [batch_size, num_classes]
+    # Compute predicted probability distribution (softmax normalized)
+    probs = F.softmax(logits, dim=1)  # Shape [batch_size, num_classes]
+    # Calculate KL divergence: KL(probs || uniform)
+    kl_per_sample = probs * (torch.log(probs + 1e-8) - torch.log(uniform + 1e-8))  # Element-wise computation
+    # Sum KL values across classes per sample
+    kl_per_sample = torch.sum(kl_per_sample, dim=1)  # Shape [batch_size]
+    # Average KL loss over batch
+    kl_loss = torch.mean(kl_per_sample)
+    
+    return kl_loss
 
 def _marginal_entropy(logits):
     probs = logits.softmax(1)
@@ -428,6 +470,8 @@ class PresudoLabelMemorySoftplusEnergyAlignment(nn.Module):
         
         return  loss_sum
     
+
+    
 class CE_MDR(nn.Module):
     def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0):
         super().__init__()
@@ -442,7 +486,22 @@ class CE_MDR(nn.Module):
         loss_sum = self.lambda_1 * _entropy(logits) + self.lambda_2 * _mdr(logits)
         
         return  loss_sum
-    
+
+class CE_KL(nn.Module):
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+
+
+    def forward(self, logits):
+        
+        loss_sum = self.lambda_1 * _entropy(logits) + self.lambda_2 * _kl_loss(logits)
+        
+        return  loss_sum
+
 class CaliE_MDR(nn.Module):
     def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0):
         super().__init__()
@@ -457,3 +516,200 @@ class CaliE_MDR(nn.Module):
         loss_sum = self.lambda_1 * _calibrated_entropy(logits,gamma=5) + self.lambda_2 * _mdr(logits)
         
         return  loss_sum
+    
+class CaliE_KL(nn.Module):
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+
+
+    def forward(self, logits):
+        
+        loss_sum = self.lambda_1 * _calibrated_entropy(logits,gamma=5) + self.lambda_2 * _kl_loss(logits)
+        
+        return  loss_sum
+class CaliE_UKL(nn.Module):
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+
+
+    def forward(self, logits):
+        
+        loss_sum = self.lambda_1 * _calibrated_entropy(logits,gamma=5) + self.lambda_2 * uniform_kl_loss(logits)
+        
+        return  loss_sum
+    
+
+
+class EnergyEntropy_selected(nn.Module):
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy+mdr
+
+    def forward(self, logits):
+        # 1. Compute energy and entropy for all samples
+        energy = -self.temp * torch.logsumexp(logits / self.temp, dim=1)
+        entropy = _entropy_samples(logits)
+        
+        # 2. Compute sample weights: S_i * log(1 + exp(E_i))
+        weights = entropy * torch.log(1 + torch.exp(energy))
+        
+        # 3. Sort and select top ratio samples with smallest weights
+        k = int(self.ratio * logits.size(0))
+        _, indices = torch.topk(weights, k, largest=False)
+        selected_logits = logits[indices]
+        
+        # 4. Compute losses for selected samples
+        entropy_loss = _entropy_samples(selected_logits).mean()  # Entropy of selected samples
+        mdr_loss = _mdr(selected_logits)  # MDR loss on selected samples
+        
+        # 5. Compute energy loss for remaining samples
+        remaining_indices = torch.ones(logits.size(0), dtype=torch.bool, device=logits.device)
+        remaining_indices[indices] = False
+        remaining_energy = energy[remaining_indices]
+        energy_loss = self.softplus(remaining_energy).mean()
+        
+        # 6. Combine all losses
+        loss_sum = (
+            self.lambda_1 * entropy_loss + 
+            self.lambda_2 * energy_loss + 
+            self.lambda_3 * mdr_loss
+        )
+        
+        return loss_sum
+    
+class EnergyEntropy_selected_all(nn.Module):
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy+mdr
+
+    def forward(self, logits):
+        # 1. Compute energy and entropy for all samples
+        energy = -self.temp * torch.logsumexp(logits / self.temp, dim=1)
+        entropy = _entropy_samples(logits)
+        
+        # 2. Compute sample weights: S_i * log(1 + exp(E_i))
+        weights = entropy * torch.log(1 + torch.exp(energy))
+        
+        # 3. Sort and select top ratio samples with smallest weights
+        k = int(self.ratio * logits.size(0))
+        _, indices = torch.topk(weights, k, largest=False)
+        selected_logits = logits[indices]
+        
+        # 4. Compute losses for selected samples
+        entropy_loss = _entropy_samples(selected_logits).mean()  # Entropy of selected samples
+        mdr_loss = _mdr(selected_logits)  # MDR loss on selected samples
+        
+        # 5. Compute energy loss for all samples
+        energy_loss = self.softplus(energy).mean()
+        
+        # 6. Combine all losses
+        loss_sum = (
+            self.lambda_1 * entropy_loss + 
+            self.lambda_2 * energy_loss + 
+            self.lambda_3 * mdr_loss
+        )
+        
+        return loss_sum
+    
+
+class EnergyEntropy_selected_energy(nn.Module):
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy+mdr
+
+    def forward(self, logits):
+        # 1. Compute energy and entropy for all samples
+        energy = -self.temp * torch.logsumexp(logits / self.temp, dim=1)
+        entropy = _entropy_samples(logits)
+        
+        # 2. Compute sample weights: S_i * log(1 + exp(E_i))
+        weights = entropy * torch.log(1 + torch.exp(energy))
+        
+        # 3. Sort and select top ratio samples with smallest weights
+        k = int(self.ratio * logits.size(0))
+        _, indices = torch.topk(weights, k, largest=False)
+        selected_logits = logits[indices]
+        
+        # 4. Compute losses for selected samples
+        entropy_loss = _entropy_samples(selected_logits).mean()  # Entropy of selected samples
+        mdr_loss = _mdr(selected_logits)  # MDR loss on selected samples
+        energy_loss = self.softplus(_energy_samples(selected_logits)).mean()
+        
+        # 6. Combine all losses
+        loss_sum = (
+            self.lambda_1 * entropy_loss + 
+            self.lambda_2 * energy_loss + 
+            self.lambda_3 * mdr_loss
+        )
+        
+        return loss_sum
+    
+
+class EnergyEntropy_selected_align(nn.Module):
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy+mdr
+
+    def forward(self, logits):
+        # 1. Compute energy and entropy for all samples
+        energy = -self.temp * torch.logsumexp(logits / self.temp, dim=1)
+        entropy = _entropy_samples(logits)
+        # entropy_ = _entropy(logits)
+        
+        # 2. Compute sample weights: S_i * log(1 + exp(E_i))
+        weights = entropy * torch.log(1 + torch.exp(energy))
+        
+        # 3. Sort and select top ratio samples with smallest weights
+        k = int(self.ratio * logits.size(0))
+        _, indices = torch.topk(weights, k, largest=False)
+        selected_logits = logits[indices]
+        selected_energy = energy[indices]
+        
+        # 4. Compute losses for selected samples
+        entropy_loss = _entropy_samples(selected_logits).mean()  # Entropy of selected samples
+        mdr_loss = _mdr(selected_logits)  # MDR loss on selected samples
+        
+        # 5. Compute energy loss for left samples
+        mask = torch.ones_like(energy, dtype=torch.bool)
+        mask[indices] = False
+        remaining_energy = energy[mask]
+        energy_diff = selected_energy.detach().mean() - remaining_energy.mean()
+        energy_align_loss = self.softplus(energy_diff)
+
+        
+        # 6. Combine all losses
+        loss_sum = (
+            self.lambda_1 * entropy_loss + 
+            self.lambda_2 * energy_align_loss + 
+            self.lambda_3 * mdr_loss
+        )
+        
+        return loss_sum

@@ -17,7 +17,7 @@ from easydict import EasyDict as edict
 from tl.utils.memory_proposed import DropMemoryBank, OnlineBuffer
 from tl.utils.loss_proposed import MemorySoftplusEnergyAlignment, CE_MDR, PresudoLabelMemorySoftplusEnergyAlignment, MemorySoftplusEnergyWeightedAlignment, \
     MemorySoftplusEnergyRatioSortedAlignment, MemorySoftplusEnergyFeatureWeightedAlignment, MemorySoftplusEnergyWeightedAlignmentMDR, \
-        CaliE_MDR, CaliE_UKL, CE_KL, CaliE_KL, EnergyEntropy_selected
+        CaliE_MDR, CaliE_UKL, CE_KL, CaliE_KL, EnergyEntropy_selected, EnergyEntropy_selected_all, EnergyEntropy_selected_align, EnergyEntropy_selected_energy
 from tl.utils.optimizer_proposed import build_optimizer
 
 pruning_methods = {
@@ -102,6 +102,12 @@ class proposed_TTA(nn.Module):
             self.loss_fn = CaliE_KL(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, temp=EnergyAlignment.temp)
         elif loss_name == 'EnergyEntropy_selected':
             self.loss_fn = EnergyEntropy_selected(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
+        elif loss_name == 'EnergyEntropy_selected_all':
+            self.loss_fn = EnergyEntropy_selected_all(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
+        elif loss_name == 'EnergyEntropy_selected_align':
+            self.loss_fn = EnergyEntropy_selected_align(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
+        elif loss_name == 'EnergyEntropy_selected_energy':
+            self.loss_fn = EnergyEntropy_selected_energy(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
         
 
         # optimizer
