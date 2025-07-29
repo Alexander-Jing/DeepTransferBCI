@@ -261,7 +261,7 @@
             "name": "Python: TTA-BCNI2014001-4-all-proposed",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_11.py",
+            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_13.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -285,9 +285,11 @@
                 "--batch_size_online", "8",
                 "--stride", "8",
                 "--use_BN", "False",
-                "--loss_func", "EnergyEntropy_selected_energy",
-                "--presudo_src", "False",
-                "--selection_ratio", "0.75",
+                "--loss_func", "PresudoLabelEMA_energy",
+                //"--presudo_src", "False",
+                "--selection_ratio", "0.5",
+                "--updating_type", "ema",
+                "--mt", "0.9",
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"

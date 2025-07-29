@@ -33,6 +33,17 @@ def _kl_loss(logits):
     
     return kl_loss
 
+def _kl_loss_samples(logits):
+
+    probs = logits.softmax(1)  # [batch_size, num_classes]
+    
+    num_classes = logits.size(1)
+    uniform = torch.ones_like(probs) * (1.0 / num_classes)  # [batch_size, num_classes]
+    
+    kl_per_sample = probs * (torch.log(probs + 1e-8) - torch.log(uniform + 1e-8))
+    kl_per_sample = torch.sum(kl_per_sample, dim=1)  # [batch_size]
+    
+    return kl_per_sample
 
 def uniform_kl_loss(logits):
     """
@@ -56,6 +67,38 @@ def uniform_kl_loss(logits):
     kl_loss = torch.mean(kl_per_sample)
     
     return kl_loss
+
+def softmax_entropy(x, x_ema):  # -> torch.Tensor:
+    """Entropy of softmax distribution from logits."""
+    return -(x_ema.softmax(1) * x.log_softmax(1)).sum(1)
+
+def symmetric_entropy_loss(p_student, p_ema):
+    """
+    Symmetric Entropy Loss between student and teacher distributions.
+    
+    Formula: L = 0.5 * [ -Σ(p_ema * log(p_student)) - Σ(p_student * log(p_ema)) ]
+    
+    Args:
+        p_student: Probability distribution from student model (shape: [batch, classes])
+        p_ema: Probability distribution from EMA teacher model (shape: [batch, classes])
+    
+    Returns:
+        Symmetric loss value (scalar tensor)
+    """
+    # Term1: Cross-entropy of student relative to EMA targets
+    term1 = -torch.sum(p_ema * torch.log(p_student + 1e-10), dim=1)  # 1e-10 for numerical stability
+    
+    # Term2: Cross-entropy of EMA relative to student targets
+    term2 = -torch.sum(p_student * torch.log(p_ema + 1e-10), dim=1)
+    
+    # Symmetric combination: average of both terms
+    loss_per_sample = 0.5 * (term1 + term2)
+    
+    # Batch-level mean reduction
+    batch_loss = loss_per_sample.mean()
+    
+    return batch_loss
+
 
 def _marginal_entropy(logits):
     probs = logits.softmax(1)
@@ -713,3 +756,131 @@ class EnergyEntropy_selected_align(nn.Module):
         )
         
         return loss_sum
+    
+
+class PresudoLabelEMA(nn.Module):
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy+mdr
+
+    def forward(self, logits, logits_ema):
+
+        presudolabel_loss = softmax_entropy(logits, logits_ema).mean(0)
+        
+        loss_sum = self.lambda_1 * presudolabel_loss + self.lambda_2 * _mdr(logits)
+
+        return loss_sum
+
+
+class PresudoLabelEMA_selection(nn.Module):
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, threshold=0.5):
+        super().__init__()
+        self.temp = temp
+        self.threshold = threshold  # 置信度阈值
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio
+
+    def forward(self, logits, logits_ema):
+        
+        # se_loss = F.cross_entropy(logits, pseudo_labels, reduction='none')
+        se_loss = softmax_entropy(logits, logits_ema)
+        
+        prob_ema = logits_ema.softmax(1)
+        conf_mask = (prob_ema.max(dim=1)[0] > self.threshold)  # 高置信度样本掩码
+        se_loss = se_loss[conf_mask].mean() if conf_mask.any() else 0.0
+        mdr_loss = _mdr(logits[conf_mask]) if conf_mask.any() else 0.0
+
+        loss_sum = self.lambda_1 * se_loss + self.lambda_2 * mdr_loss
+        return loss_sum
+
+class PresudoLabelEMA_symmetric(nn.Module):
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp          # Temperature parameter for probability sharpening
+        self.softplus = nn.Softplus()  # Softplus activation (currently unused)
+        self.lambda_1 = lambda_1  # Weight for symmetric entropy loss
+        self.lambda_2 = lambda_2  # Weight for MDR regularization
+        self.lambda_3 = lambda_3  # Reserved weight parameter
+        self.ratio = ratio        # Ratio of samples to select for entropy + MDR
+
+    def forward(self, logits, logits_ema):
+        # Compute probability distributions with temperature scaling
+        p_student = F.softmax(logits / self.temp, dim=1)
+        p_ema = F.softmax(logits_ema / self.temp, dim=1)
+        
+        # Calculate symmetric entropy loss
+        symmetric_loss = symmetric_entropy_loss(p_student, p_ema)
+        
+        # Combine losses with weighting coefficients
+        loss_sum = self.lambda_1 * symmetric_loss + self.lambda_2 * _mdr(logits)
+        return loss_sum
+
+class PresudoLabelEMA_energy(nn.Module):
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy+mdr
+
+    def forward(self, logits, logits_ema):
+
+        # 1. Compute energy and entropy for all samples
+        energy = -self.temp * torch.logsumexp(logits / self.temp, dim=1)
+        entropy = _entropy_samples(logits)    
+        
+        # 2. Compute sample weights: S_i * log(1 + exp(E_i))
+        weights = entropy * torch.log(1 + torch.exp(energy))
+        
+        # 3. Sort and select top ratio samples with smallest weights
+        k = int(self.ratio * logits.size(0))
+        _, indices = torch.topk(weights, k, largest=False)
+        
+        # 4. calcuate the loss for the selected samples
+        presudolabel_loss = softmax_entropy(logits[indices], logits_ema[indices]).mean()
+        
+        loss_sum = self.lambda_1 * presudolabel_loss + self.lambda_2 * _energy_samples(logits[indices]).mean()
+
+        return loss_sum
+
+"""class PresudoLabelEMA_energy(nn.Module):
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy+mdr
+
+    def forward(self, logits, logits_ema):
+
+        # 1. Compute energy and entropy for all samples
+        energy = -self.temp * torch.logsumexp(logits / self.temp, dim=1)
+        entropy = _entropy_samples(logits)    
+        
+        # 2. Compute sample weights: S_i * log(1 + exp(E_i))
+        weights = entropy * torch.log(1 + torch.exp(energy))
+        
+        # 3. Sort and select top ratio samples with smallest weights
+        k = int(self.ratio * logits.size(0))
+        _, indices = torch.topk(weights, k, largest=False)
+        
+        # 4. calcuate the loss for the selected samples
+        presudolabel_loss = softmax_entropy(logits[indices], logits_ema[indices]).mean()
+        
+        loss_sum = self.lambda_1 * presudolabel_loss + self.lambda_2 * _mdr(logits[indices])
+
+        return loss_sum"""
+    
+
+
