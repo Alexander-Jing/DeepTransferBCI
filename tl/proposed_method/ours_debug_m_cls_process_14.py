@@ -458,10 +458,10 @@ if __name__ == '__main__':
         })
         args.EnergyAlignment = Box({
             "ratio":selection_ratio,
-            "lambda_1": 1.0,
+            "lambda_1": 0.0,
             "lambda_2": 0.0,
             "lambda_3": 1.0,
-            "temp": 1.0,
+            "temp": 2.0,
         })
         args.capacity = 64
         args.bn_alpha = 0.1

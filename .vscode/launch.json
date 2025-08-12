@@ -285,10 +285,10 @@
                 "--batch_size_online", "8",
                 "--stride", "8",
                 "--use_BN", "False",
-                "--loss_func", "PresudoLabelEMA_energy",
+                "--loss_func", "ConsSamples_selection_2",
                 //"--presudo_src", "False",
-                "--selection_ratio", "0.5",
-                "--updating_type", "ema",
+                "--selection_ratio", "0.75",
+                "--updating_type", "entropy",
                 "--mt", "0.9",
             ],
             "env": {

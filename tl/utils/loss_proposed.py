@@ -100,6 +100,556 @@ def symmetric_entropy_loss(p_student, p_ema):
     return batch_loss
 
 
+
+
+
+
+def contrastive_loss_samples(logits, thr=0.4, temperature=0.07):
+    """
+    实现图片中的对比损失函数公式
+    参数:
+        logits: 模型输出的logits [batch_size, num_classes]
+        thr: 置信度阈值，用于过滤低置信度样本
+        temperature: 对比损失温度参数
+    """
+    # 1. 计算每个样本的预测概率和伪标签
+    prob_all, pseudo_labels = torch.max(torch.softmax(logits, dim=-1), dim=-1)
+    
+    # 2. 应用置信度阈值过滤
+    conf_indices = prob_all >= thr
+    if not torch.any(conf_indices):
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+    
+    # 3. 筛选高置信度样本
+    conf_logits = logits[conf_indices]
+    conf_labels = pseudo_labels[conf_indices]
+    batch_size = conf_logits.size(0)
+    
+    # 4. 计算logits间的余弦相似度矩阵
+    sim_matrix = F.cosine_similarity(
+        conf_logits.unsqueeze(1),  # [batch_size, 1, num_classes]
+        conf_logits.unsqueeze(0),  # [1, batch_size, num_classes]
+        dim=-1
+    )
+    
+    # 5. 创建正负样本掩码
+    # 正样本：相同伪标签且非自身
+    pos_mask = (conf_labels.unsqueeze(0) == conf_labels.unsqueeze(1)) & \
+               (~torch.eye(batch_size, dtype=torch.bool, device=logits.device))
+    
+    # 负样本：不同伪标签
+    neg_mask = conf_labels.unsqueeze(0) != conf_labels.unsqueeze(1)
+    
+    # 6. 计算每个样本的正样本数量
+    pos_counts = pos_mask.sum(dim=1).float()  # [batch_size]
+    valid_samples = pos_counts > 0  # 排除没有正样本的样本
+    
+    # 7. 初始化损失
+    total_loss = torch.tensor(0.0, device=logits.device)
+    valid_count = 0
+    
+    # 8. 遍历每个样本计算损失
+    for i in range(batch_size):
+        if not valid_samples[i]:
+            continue  # 跳过没有正样本的样本
+            
+        # 获取当前样本的正样本索引
+        pos_indices = torch.where(pos_mask[i])[0]
+        
+        # 计算分子：正样本的指数相似度之和
+        numerator = torch.sum(torch.exp(sim_matrix[i, pos_indices] / temperature))
+        
+        # 获取当前样本的负样本索引
+        neg_indices = torch.where(neg_mask[i])[0]
+        
+        # 计算分母：负样本的指数相似度之和
+        denominator = torch.sum(torch.exp(sim_matrix[i, neg_indices] / temperature))
+        
+        # 计算损失项：-log(分子/分母)
+        loss_term = -torch.log(numerator / denominator)
+        
+        # 除以正样本数量（|pos(i)|）
+        loss_term /= pos_counts[i]
+        
+        # 累加损失
+        total_loss += loss_term
+        valid_count += 1
+    
+    # 9. 计算平均损失
+    if valid_count > 0:
+        return total_loss / valid_count
+    else:
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+
+def contrastive_loss_samplefeatures(logits, features, thr=0.0, temperature=0.07):
+    """
+    使用样本特征计算相似度的对比损失函数
+    
+    参数:
+        logits: 模型输出的logits [batch_size, num_classes]
+        features: 样本的特征向量 [batch_size, feature_dim]
+        thr: 置信度阈值，用于过滤低置信度样本
+        temperature: 对比损失温度参数
+    """
+    # 1. 计算每个样本的预测概率和伪标签 (使用logits)
+    prob_all, pseudo_labels = torch.max(torch.softmax(logits, dim=-1), dim=-1)
+    
+    # 2. 应用置信度阈值过滤
+    conf_indices = prob_all >= thr
+    if not torch.any(conf_indices):
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+    
+    # 3. 筛选高置信度样本的特征和标签
+    conf_features = features[conf_indices]  # [batch_size, feature_dim]
+    conf_labels = pseudo_labels[conf_indices]  # [batch_size]
+    batch_size = conf_features.size(0)
+    
+    # 4. 计算特征间的余弦相似度矩阵 (使用features)
+    sim_matrix = F.cosine_similarity(
+        conf_features.unsqueeze(1),  # [batch_size, 1, feature_dim]
+        conf_features.unsqueeze(0),  # [1, batch_size, feature_dim]
+        dim=-1
+    )
+    
+    # 5. 创建正负样本掩码
+    # 正样本：相同伪标签且非自身
+    pos_mask = (conf_labels.unsqueeze(0) == conf_labels.unsqueeze(1)) & \
+               (~torch.eye(batch_size, dtype=torch.bool, device=logits.device))
+    
+    # 负样本：不同伪标签
+    neg_mask = conf_labels.unsqueeze(0) != conf_labels.unsqueeze(1)
+    
+    # 6. 计算每个样本的正样本数量
+    pos_counts = pos_mask.sum(dim=1).float()  # [batch_size]
+    valid_samples = pos_counts > 0  # 排除没有正样本的样本
+    
+    # 7. 初始化损失
+    total_loss = torch.tensor(0.0, device=logits.device)
+    valid_count = 0
+    
+    # 8. 遍历每个样本计算损失
+    for i in range(batch_size):
+        if not valid_samples[i]:
+            continue  # 跳过没有正样本的样本
+            
+        # 获取当前样本的正样本索引
+        pos_indices = torch.where(pos_mask[i])[0]
+        
+        # 计算分子：正样本的特征相似度指数和
+        numerator = torch.sum(torch.exp(sim_matrix[i, pos_indices] / temperature))
+        
+        # 获取当前样本的负样本索引
+        neg_indices = torch.where(neg_mask[i])[0]
+        
+        # 计算分母：负样本的特征相似度指数和
+        denominator = torch.sum(torch.exp(sim_matrix[i, neg_indices] / temperature))
+        
+        # 计算损失项：-log(分子/分母)
+        loss_term = -torch.log(numerator / denominator)
+        
+        # 除以正样本数量（|pos(i)|）
+        loss_term /= pos_counts[i]
+        
+        # 累加损失
+        total_loss += loss_term
+        valid_count += 1
+    
+    # 9. 计算平均损失
+    if valid_count > 0:
+        return total_loss / valid_count
+    else:
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+    
+def contrastive_loss_samples_selection(logits, ratio=0.75, temperature=0.07):
+    """
+    实现基于能量和熵的对比损失函数
+    参数:
+        logits: 模型输出的logits [batch_size, num_classes]
+        ratio: 用于筛选权重样本的阈值百分比（比例）
+        temperature: 对比损失温度参数
+    """
+    batch_size = logits.size(0)
+    
+    # 1. 计算每个样本的能量和熵
+    energy = -temperature * torch.logsumexp(logits / temperature, dim=1)
+    entropy = _entropy_samples(logits)
+    
+    # 2. 计算样本权重: S_i * log(1 + exp(E_i))
+    weights = entropy * torch.log(1 + torch.exp(energy))
+    
+    # 3. 应用权重阈值筛选样本
+    k = max(1, int(batch_size * ratio))  # 至少选择1个样本
+    _, conf_indices = torch.topk(weights, k, largest=False, sorted=True)
+    
+    # 4. 获取高权重样本的logits和伪标签
+    probs = torch.softmax(logits, dim=1)
+    _, pseudo_labels = torch.max(probs, dim=1)
+    conf_logits = logits[conf_indices]
+    conf_labels = pseudo_labels[conf_indices]
+    k = conf_logits.size(0)  # 实际选中的样本数量
+    
+    # 5. 计算logits间的余弦相似度矩阵
+    sim_matrix = F.cosine_similarity(
+        conf_logits.unsqueeze(1),  # [k, 1, num_classes]
+        conf_logits.unsqueeze(0),  # [1, k, num_classes]
+        dim=-1
+    )
+    
+    # 6. 创建正负样本掩码
+    # 正样本：相同伪标签且非自身
+    pos_mask = (conf_labels.unsqueeze(0) == conf_labels.unsqueeze(1)) & \
+               (~torch.eye(k, dtype=torch.bool, device=logits.device))
+    
+    # 负样本：不同伪标签
+    neg_mask = conf_labels.unsqueeze(0) != conf_labels.unsqueeze(1)
+    
+    # 7. 计算每个样本的正样本数量
+    pos_counts = pos_mask.sum(dim=1).float()  # [k]
+    valid_samples = pos_counts > 0  # 排除没有正样本的样本
+    
+    # 8. 初始化损失
+    total_loss = torch.tensor(0.0, device=logits.device)
+    valid_count = 0
+    
+    # 9. 遍历每个样本计算损失
+    for i in range(k):
+        if not valid_samples[i]:
+            continue  # 跳过没有正样本的样本
+            
+        # 获取当前样本的正样本索引
+        pos_indices = torch.where(pos_mask[i])[0]
+        
+        # 计算分子：正样本的指数相似度之和
+        numerator = torch.sum(torch.exp(sim_matrix[i, pos_indices] / temperature))
+        
+        # 获取当前样本的负样本索引
+        neg_indices = torch.where(neg_mask[i])[0]
+        
+        # 计算分母：负样本的指数相似度之和
+        denominator = torch.sum(torch.exp(sim_matrix[i, neg_indices] / temperature))
+        
+        # 计算损失项：-log(分子/分母)
+        loss_term = -torch.log(numerator / (denominator + 1e-8))  # 添加小量避免除零
+        
+        # 除以正样本数量（|pos(i)|）
+        loss_term /= pos_counts[i]
+        
+        # 累加损失
+        total_loss += loss_term
+        valid_count += 1
+    
+    # 10. 计算平均损失
+    if valid_count > 0:
+        return total_loss / valid_count
+    else:
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+
+
+def contrastive_loss_samples_selection_1(logits, ratio=0.75, temperature=0.07):
+    """
+    实现基于熵的对比损失函数
+    参数:
+        logits: 模型输出的logits [batch_size, num_classes]
+        ratio: 用于筛选权重样本的阈值百分比（比例）
+        temperature: 对比损失温度参数
+    """
+    batch_size = logits.size(0)
+    
+    # 1. 计算每个样本的熵
+    entropy = _entropy_samples(logits)
+    
+    # 2. 计算样本权重: S_i
+    weights = entropy
+    
+    # 3. 应用权重阈值筛选样本
+    k = max(1, int(batch_size * ratio))  # 至少选择1个样本
+    _, conf_indices = torch.topk(weights, k, largest=False, sorted=True)
+    
+    # 4. 获取高权重样本的logits和伪标签
+    probs = torch.softmax(logits, dim=1)
+    _, pseudo_labels = torch.max(probs, dim=1)
+    conf_logits = logits[conf_indices]
+    conf_labels = pseudo_labels[conf_indices]
+    k = conf_logits.size(0)  # 实际选中的样本数量
+    
+    # 5. 计算logits间的余弦相似度矩阵
+    sim_matrix = F.cosine_similarity(
+        conf_logits.unsqueeze(1),  # [k, 1, num_classes]
+        conf_logits.unsqueeze(0),  # [1, k, num_classes]
+        dim=-1
+    )
+    
+    # 6. 创建正负样本掩码
+    # 正样本：相同伪标签且非自身
+    pos_mask = (conf_labels.unsqueeze(0) == conf_labels.unsqueeze(1)) & \
+               (~torch.eye(k, dtype=torch.bool, device=logits.device))
+    
+    # 负样本：不同伪标签
+    neg_mask = conf_labels.unsqueeze(0) != conf_labels.unsqueeze(1)
+    
+    # 7. 计算每个样本的正样本数量
+    pos_counts = pos_mask.sum(dim=1).float()  # [k]
+    valid_samples = pos_counts > 0  # 排除没有正样本的样本
+    
+    # 8. 初始化损失
+    total_loss = torch.tensor(0.0, device=logits.device)
+    valid_count = 0
+    
+    # 9. 遍历每个样本计算损失
+    for i in range(k):
+        if not valid_samples[i]:
+            continue  # 跳过没有正样本的样本
+            
+        # 获取当前样本的正样本索引
+        pos_indices = torch.where(pos_mask[i])[0]
+        
+        # 计算分子：正样本的指数相似度之和
+        numerator = torch.sum(torch.exp(sim_matrix[i, pos_indices] / temperature))
+        
+        # 获取当前样本的负样本索引
+        neg_indices = torch.where(neg_mask[i])[0]
+        
+        # 计算分母：负样本的指数相似度之和
+        denominator = torch.sum(torch.exp(sim_matrix[i, neg_indices] / temperature))
+        
+        # 计算损失项：-log(分子/分母)
+        loss_term = -torch.log(numerator / (denominator + 1e-8))  # 添加小量避免除零
+        
+        # 除以正样本数量（|pos(i)|）
+        loss_term /= pos_counts[i]
+        
+        # 累加损失
+        total_loss += loss_term
+        valid_count += 1
+    
+    # 10. 计算平均损失
+    if valid_count > 0:
+        return total_loss / valid_count
+    else:
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+    
+
+def contrastive_loss_samples_selection_2(logits, ratio=0.75, temperature=0.07):
+    """
+    实现基于能量的对比损失函数
+    参数:
+        logits: 模型输出的logits [batch_size, num_classes]
+        ratio: 用于筛选权重样本的阈值百分比（比例）
+        temperature: 对比损失温度参数
+    """
+    batch_size = logits.size(0)
+    
+    # 1. 计算每个样本的熵
+    energy = -temperature * torch.logsumexp(logits / temperature, dim=1)
+    
+    # 2. 计算样本权重: S_i
+    weights = energy
+    
+    # 3. 应用权重阈值筛选样本
+    k = max(1, int(batch_size * ratio))  # 至少选择1个样本
+    _, conf_indices = torch.topk(weights, k, largest=False, sorted=True)
+    
+    # 4. 获取高权重样本的logits和伪标签
+    probs = torch.softmax(logits, dim=1)
+    _, pseudo_labels = torch.max(probs, dim=1)
+    conf_logits = logits[conf_indices]
+    conf_labels = pseudo_labels[conf_indices]
+    k = conf_logits.size(0)  # 实际选中的样本数量
+    
+    # 5. 计算logits间的余弦相似度矩阵
+    sim_matrix = F.cosine_similarity(
+        conf_logits.unsqueeze(1),  # [k, 1, num_classes]
+        conf_logits.unsqueeze(0),  # [1, k, num_classes]
+        dim=-1
+    )
+    
+    # 6. 创建正负样本掩码
+    # 正样本：相同伪标签且非自身
+    pos_mask = (conf_labels.unsqueeze(0) == conf_labels.unsqueeze(1)) & \
+               (~torch.eye(k, dtype=torch.bool, device=logits.device))
+    
+    # 负样本：不同伪标签
+    neg_mask = conf_labels.unsqueeze(0) != conf_labels.unsqueeze(1)
+    
+    # 7. 计算每个样本的正样本数量
+    pos_counts = pos_mask.sum(dim=1).float()  # [k]
+    valid_samples = pos_counts > 0  # 排除没有正样本的样本
+    
+    # 8. 初始化损失
+    total_loss = torch.tensor(0.0, device=logits.device)
+    valid_count = 0
+    
+    # 9. 遍历每个样本计算损失
+    for i in range(k):
+        if not valid_samples[i]:
+            continue  # 跳过没有正样本的样本
+            
+        # 获取当前样本的正样本索引
+        pos_indices = torch.where(pos_mask[i])[0]
+        
+        # 计算分子：正样本的指数相似度之和
+        numerator = torch.sum(torch.exp(sim_matrix[i, pos_indices] / temperature))
+        
+        # 获取当前样本的负样本索引
+        neg_indices = torch.where(neg_mask[i])[0]
+        
+        # 计算分母：负样本的指数相似度之和
+        denominator = torch.sum(torch.exp(sim_matrix[i, neg_indices] / temperature))
+        
+        # 计算损失项：-log(分子/分母)
+        loss_term = -torch.log(numerator / (denominator + 1e-8))  # 添加小量避免除零
+        
+        # 除以正样本数量（|pos(i)|）
+        loss_term /= pos_counts[i]
+        
+        # 累加损失
+        total_loss += loss_term
+        valid_count += 1
+    
+    # 10. 计算平均损失
+    if valid_count > 0:
+        return total_loss / valid_count
+    else:
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+
+
+def contrastive_loss_samples_weighted(logits, thr=0.4, temperature=0.07):
+    """
+    实现包含低置信度样本的对比损失函数
+    参数:
+        logits: 模型输出的logits [batch_size, num_classes]
+        thr: 置信度阈值，用于区分高/低置信度样本
+        temperature: 对比损失温度参数
+    """
+    # 1. 计算每个样本的预测概率和伪标签
+    probs = torch.softmax(logits, dim=-1)
+    prob_all, pseudo_labels = torch.max(probs, dim=-1)
+    num_classes = logits.size(-1)
+    device = logits.device
+    
+    # 2. 分离高置信度和低置信度样本
+    high_conf_mask = prob_all >= thr
+    low_conf_mask = prob_all < thr
+    
+    high_logits = logits[high_conf_mask]
+    high_labels = pseudo_labels[high_conf_mask]
+    n_high = high_logits.size(0)
+    
+    low_logits = logits[low_conf_mask]
+    low_probs = probs[low_conf_mask]
+    n_low = low_logits.size(0)
+    
+    # 3. 计算高置信度样本的对比损失（原逻辑）
+    high_loss = torch.tensor(0.0, device=device)
+    n_valid_high = 0
+    
+    if n_high > 0:
+        # 计算高置信度样本间的相似度
+        sim_matrix_high = F.cosine_similarity(
+            high_logits.unsqueeze(1), 
+            high_logits.unsqueeze(0), 
+            dim=-1
+        )
+        
+        # 创建正负样本掩码
+        pos_mask_high = (high_labels.unsqueeze(0) == high_labels.unsqueeze(1)) & \
+                       (~torch.eye(n_high, dtype=torch.bool, device=device))
+        neg_mask_high = high_labels.unsqueeze(0) != high_labels.unsqueeze(1)
+        pos_counts_high = pos_mask_high.sum(dim=1).float()
+        valid_high_samples = pos_counts_high > 0
+        
+        # 遍历每个高置信度样本计算损失
+        for i in range(n_high):
+            if not valid_high_samples[i]:
+                continue
+                
+            pos_idx = torch.where(pos_mask_high[i])[0]
+            neg_idx = torch.where(neg_mask_high[i])[0]
+            
+            numerator = torch.sum(torch.exp(sim_matrix_high[i, pos_idx] / temperature))
+            denominator = torch.sum(torch.exp(sim_matrix_high[i, neg_idx] / temperature))
+            
+            loss_term = -torch.log(numerator / denominator)
+            loss_term /= pos_counts_high[i]
+            
+            high_loss += loss_term
+            n_valid_high += 1
+    
+    # 4. 计算低置信度样本的对比损失（新逻辑）
+    low_loss = torch.tensor(0.0, device=device)
+    n_valid_low = 0
+    
+    if n_low > 0 and n_high > 0:
+        # 计算低置信度样本与高置信度样本间的相似度
+        sim_matrix_low_high = F.cosine_similarity(
+            low_logits.unsqueeze(1),  # [n_low, 1, D]
+            high_logits.unsqueeze(0),  # [1, n_high, D]
+            dim=-1
+        )  # [n_low, n_high]
+        
+        # 遍历每个低置信度样本
+        for i in range(n_low):
+            sample_loss = torch.tensor(0.0, device=device)
+            valid_categories = 0
+            
+            # 遍历每个可能的类别
+            for c in range(num_classes):
+                class_prob = low_probs[i, c]
+                if class_prob < 1e-6:  # 忽略概率极小的类别
+                    continue
+                    
+                # 获取当前类别的正负样本
+                pos_idx = torch.where(high_labels == c)[0]
+                neg_idx = torch.where(high_labels != c)[0]
+                
+                if len(pos_idx) == 0:
+                    continue
+                
+                # 计算当前类别的对比损失
+                pos_sim = sim_matrix_low_high[i, pos_idx]
+                neg_sim = sim_matrix_low_high[i, neg_idx]
+                
+                numerator = torch.sum(torch.exp(pos_sim / temperature))
+                denominator = torch.sum(torch.exp(neg_sim / temperature))
+                
+                # 避免分母过小导致数值不稳定
+                if denominator < 1e-8:
+                    continue
+                
+                loss_term = -torch.log(numerator / denominator)
+                sample_loss += class_prob * loss_term
+                valid_categories += 1
+            
+            if valid_categories > 0:
+                # 标准化损失：平均权重总和应等于1
+                sample_loss = sample_loss / (class_prob.sum() if valid_categories == 1 else valid_categories)
+                low_loss += sample_loss
+                n_valid_low += 1
+    
+    # 5. 合并两部分损失
+    total_loss = torch.tensor(0.0, device=device, requires_grad=True)
+    total_valid = 0
+    
+    if n_valid_high > 0:
+        high_loss_avg = high_loss / n_valid_high
+        total_loss = total_loss + high_loss_avg
+        total_valid += 1
+    
+    if n_valid_low > 0:
+        low_loss_avg = low_loss / n_valid_low
+        total_loss = total_loss + low_loss_avg
+        total_valid += 1
+    
+    # 6. 计算最终平均损失
+    if total_valid == 0:
+        return torch.tensor(0.0, device=device, requires_grad=True)
+    elif total_valid == 2:
+        return total_loss / 2  # 两个损失分量等权平均
+    else:
+        return total_loss  # 只有一个分量有效
+
+
+
 def _marginal_entropy(logits):
     probs = logits.softmax(1)
     marginal_probs = probs.mean(0)
@@ -149,6 +699,67 @@ def _calibrated_entropy(logits, gamma=1.0):
     # Apply calibration and compute final loss
     calibrated_entropy = calibration_factor * sample_entropy  # [B]
     loss = calibrated_entropy.mean()  # Batch mean reduction
+    
+    return loss
+
+def _weighted_lcs(input, cls_weight, thr=0.):
+    classwise_virtual_logits = torch.matmul(cls_weight, cls_weight.T)
+    #classwise_logit_dir = classwise_virtual_logits / classwise_virtual_logits.norm(dim=-1)
+
+    # simple pseudo-labeling
+    prob_all, indices_all = input.softmax(-1).max(-1)
+    virtual_logits = classwise_virtual_logits[indices_all]
+    conf_indices = prob_all>=thr
+    loss = 1 - F.cosine_similarity(input, virtual_logits, dim=-1)
+    loss = (prob_all.detach() - thr).exp() * loss
+    loss = loss[conf_indices]
+
+    # option = 0
+    # if option == 0:
+    #     loss = prob_all.detach().exp() * loss
+    # else:
+    #     loss = (prob_all.detach()-thr).exp() * loss
+    # loss = loss[conf_indices]
+
+    return loss
+
+def _weighted_lcs_cons(input, cls_weight, thr=0., temperature=0.07):
+    # 计算类别原型向量间的相似度矩阵
+    classwise_virtual_logits = torch.matmul(cls_weight, cls_weight.T)
+    
+    # 获取预测概率和类别索引
+    prob_all, indices_all = input.softmax(-1).max(-1)
+    
+    # 获取正样本（自身类别）
+    pos_logits = classwise_virtual_logits[indices_all]
+    
+    # 创建负样本掩码（排除自身类别）
+    batch_size = input.size(0)
+    num_classes = cls_weight.size(0)
+    mask = torch.ones(batch_size, num_classes, dtype=torch.bool, device=input.device)
+    mask.scatter_(1, indices_all.unsqueeze(1), False)
+    
+    # 获取负样本（其他类别）
+    neg_logits = classwise_virtual_logits.unsqueeze(0).expand(batch_size, -1, -1)
+    neg_logits = neg_logits[mask].view(batch_size, num_classes-1, -1)
+    
+    # 计算正样本相似度
+    pos_sim = F.cosine_similarity(input.unsqueeze(1), pos_logits.unsqueeze(1), dim=-1).squeeze(1)
+    
+    # 计算负样本相似度
+    neg_sim = F.cosine_similarity(input.unsqueeze(1), neg_logits, dim=-1)
+    
+    # 计算对比损失
+    numerator = torch.exp(pos_sim / temperature)
+    denominator = numerator + torch.sum(torch.exp(neg_sim / temperature), dim=1)
+    loss = -torch.log(numerator / denominator)
+    
+    # 应用置信度加权
+    loss = (prob_all.detach() - thr).exp() * loss
+    
+    # 应用置信度阈值过滤
+    conf_indices = prob_all >= thr
+    loss = loss[conf_indices]
     
     return loss
 
@@ -589,6 +1200,144 @@ class CaliE_UKL(nn.Module):
         
         return  loss_sum
     
+class CaliE_MDR_lcs(nn.Module):
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, cls_weight):
+        
+        loss_sum = self.lambda_1 * _calibrated_entropy(logits,gamma=5) + self.lambda_2 * _mdr(logits) + self.lambda_3 * _weighted_lcs(logits, cls_weight, thr=0.4).mean(0)
+        
+        return  loss_sum
+    
+class CaliE_MDR_lcs_cons(nn.Module):
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, cls_weight):
+        
+        loss_sum = self.lambda_1 * _entropy(logits) + self.lambda_2 * _mdr(logits) + self.lambda_3 * _weighted_lcs_cons(logits, cls_weight, thr=0.4).mean(0)
+        
+        return  loss_sum
+    
+class CaliE_MDR_lcs_selection(nn.Module):
+    def __init__(self, thr=0.4, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.thr = thr  # Original selection ratio parameter (retained but not used for max_prob selection)
+
+    def forward(self, logits, cls_weight):
+        """
+        Compute loss only for samples where max softmax probability > self.thr
+        
+        Args:
+            logits: Unnormalized model predictions [batch_size, num_classes]
+            cls_weight: Class weights (if applicable) [batch_size] or [batch_size, ...]
+            
+        Returns:
+            Weighted combination of losses for selected samples
+        """
+        # Compute softmax probabilities along class dimension
+        probs = F.softmax(logits, dim=-1)
+        
+        # Get maximum prediction probability for each sample
+        max_probs, _ = torch.max(probs, dim=-1)
+        
+        # Create boolean mask: True where max probability > self.thr
+        selection_mask = max_probs > self.thr
+        
+        # Handle case with no qualifying samples
+        if not torch.any(selection_mask):
+            # Return scalar 0 tensor to maintain gradient flow
+            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+        
+        # Apply selection mask to logits
+        selected_logits = logits[selection_mask]
+        
+        # Compute loss components using ONLY selected samples
+        ce_loss = _calibrated_entropy(selected_logits, gamma=5)
+        mdr_loss = _mdr(selected_logits)
+        wlcs_loss = _weighted_lcs(selected_logits, cls_weight, thr=self.thr).mean(0)
+        
+        # Combine losses with weighting coefficients
+        loss_sum = (
+            self.lambda_1 * ce_loss + 
+            self.lambda_2 * mdr_loss + 
+            self.lambda_3 * wlcs_loss
+        )
+        
+        return loss_sum
+
+class CaliE_MDR_lcs_ConsSamples(nn.Module):
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, cls_weight):
+        
+        cons_loss = contrastive_loss_samples(logits, thr=0.4, temperature=self.temp)
+
+        loss_sum = self.lambda_1 * _calibrated_entropy(logits,gamma=5) + self.lambda_2 * _mdr(logits) + self.lambda_3 * cons_loss
+        
+        return  loss_sum
+
+class CaliE_MDR_lcs_ConsSamplesFea(nn.Module):
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, feature):
+        
+        cons_loss = contrastive_loss_samplefeatures(logits, feature, thr=0.4, temperature=self.temp)
+
+        loss_sum = self.lambda_1 * _calibrated_entropy(logits,gamma=5) + self.lambda_2 * _mdr(logits) + self.lambda_3 * cons_loss
+        
+        return  loss_sum
+
+
+class CE_KL_ConsSamplesFea(nn.Module):
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, feature):
+
+        cons_loss = contrastive_loss_samplefeatures(logits, feature, thr=0.4, temperature=self.temp)
+        
+        loss_sum = self.lambda_1 * _entropy(logits) + self.lambda_2 * _kl_loss(logits) + self.lambda_3 * cons_loss
+        
+        return  loss_sum
 
 
 class EnergyEntropy_selected(nn.Module):
@@ -882,5 +1631,163 @@ class PresudoLabelEMA_energy(nn.Module):
 
         return loss_sum"""
     
+class PresudoLabelEMA_lcs(nn.Module):
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
 
+    def forward(self, logits, logits_ema, cls_weight):
 
+        presudolabel_loss = softmax_entropy(logits, logits_ema).mean(0)
+        
+        loss_sum = self.lambda_1 * presudolabel_loss + self.lambda_2 * _mdr(logits) + self.lambda_3 * _weighted_lcs(logits, cls_weight, thr=0.4).mean(0)
+
+        return loss_sum
+
+class PresudoLabelEMA_SampleCons(nn.Module):
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, logits_ema):
+
+        presudolabel_loss = softmax_entropy(logits, logits_ema).mean(0)
+        
+        loss_sum = self.lambda_1 * presudolabel_loss + self.lambda_2 * _mdr(logits) + self.lambda_3 * contrastive_loss_samples(logits, thr=0.4, temperature=self.temp)
+
+        return loss_sum
+
+class EntropyMDREMA_lcs(nn.Module):
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, logits_ema, cls_weight):
+        
+        loss_sum = self.lambda_1 * _calibrated_entropy(logits,gamma=5) + self.lambda_2 * _mdr(logits) + self.lambda_3 * _weighted_lcs(logits, cls_weight, thr=0.4).mean(0)
+
+        return loss_sum
+
+class ConsSamples(nn.Module):
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits):
+        
+        cons_loss = contrastive_loss_samples(logits, thr=0.66, temperature=self.temp)
+        
+        loss_sum = self.lambda_1 * cons_loss
+        
+        return  loss_sum
+
+class ConsSamples_lcs(nn.Module):
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, cls_weight):
+        
+        cons_loss = contrastive_loss_samples(logits, thr=0.4, temperature=self.temp)
+        lcs_loss = _weighted_lcs(logits, cls_weight, thr=0.4).mean(0)
+
+        loss_sum = self.lambda_1 * cons_loss + self.lambda_2 * lcs_loss
+        
+        return  loss_sum
+
+class ConsSamples_weighted(nn.Module):
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits):
+        
+        cons_loss = contrastive_loss_samples_weighted(logits, thr=0.4, temperature=self.temp)
+
+        loss_sum = self.lambda_1 * cons_loss
+        
+        return  loss_sum
+
+class ConsSamples_selection(nn.Module):
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits):
+        
+        cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+
+        loss_sum = self.lambda_1 * cons_loss
+        
+        return  loss_sum
+
+class ConsSamples_selection_1(nn.Module):
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits):
+        
+        cons_loss = contrastive_loss_samples_selection_1(logits, ratio=self.ratio, temperature=self.temp)
+
+        loss_sum = self.lambda_1 * cons_loss
+        
+        return  loss_sum
+    
+class ConsSamples_selection_2(nn.Module):
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits):
+        
+        cons_loss = contrastive_loss_samples_selection_2(logits, ratio=self.ratio, temperature=self.temp)
+
+        loss_sum = self.lambda_1 * cons_loss
+        
+        return  loss_sum
