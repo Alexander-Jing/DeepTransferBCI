@@ -121,6 +121,50 @@ class DropMemoryBank:
 
         return tmp_data, tmp_uncertainty, tmp_class
     
+    def get_prototypes(self, ratio):
+        """
+        计算每个类别的原型向量并返回张量形式
+        参数:
+            ratio (float): 选择每个类别中不确定性最低的比例(0-1)
+        返回:
+            torch.Tensor: 形状为[num_class, feature_dim]的原型张量
+        """
+        # 确定特征维度（从第一个非空类别的第一个样本获取）
+        feature_dim = None
+        for cls_items in self.data:
+            if cls_items and cls_items[0].data is not None:
+                feature_dim = cls_items[0].data.shape[-1]
+                break
+        
+        # 如果没有找到有效数据，返回空张量
+        if feature_dim is None:
+            return torch.empty(0, 0)
+        
+        # 初始化全零张量 [num_class, feature_dim]
+        prototypes_tensor = torch.zeros(self.num_class, feature_dim)
+        
+        for cls_idx in range(self.num_class):
+            class_items = self.data[cls_idx]
+            if not class_items:
+                continue  # 跳过空类别
+            
+            # 按不确定性排序并选择前ratio比例的项目
+            sorted_items = sorted(class_items, key=lambda x: x.uncertainty)
+            n_select = max(1, int(np.ceil(len(class_items) * ratio)))
+            selected_items = sorted_items[:n_select]
+            
+            # 提取数据并计算平均值
+            selected_data = [item.data for item in selected_items]
+            stacked_data = torch.stack(selected_data)
+            cls_prototype = torch.mean(stacked_data, dim=0)
+            
+            # 将原型向量放入对应类别的行
+            prototypes_tensor[cls_idx] = cls_prototype
+        
+        return prototypes_tensor
+
+
+
 # the buffer for storing the batch based data
 class OnlineBuffer:
     def __init__(self, buffer_size: int):

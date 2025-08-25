@@ -345,6 +345,89 @@ def contrastive_loss_samples_selection(logits, ratio=0.75, temperature=0.07):
         return torch.tensor(0.0, device=logits.device, requires_grad=True)
 
 
+def contrastive_loss_samples_selection_dropout(logits, probs_dropout, ratio=0.75, temperature=0.07):
+    """
+    实现基于能量和熵的对比损失函数
+    参数:
+        logits: 模型输出的logits [batch_size, num_classes]
+        ratio: 用于筛选权重样本的阈值百分比（比例）
+        temperature: 对比损失温度参数
+    """
+    batch_size = logits.size(0)
+    
+    # 1. 计算每个样本的能量和熵
+    energy = -temperature * torch.logsumexp(logits / temperature, dim=1)
+    entropy = _entropy_samples(logits)
+    
+    # 2. 计算样本权重: S_i * log(1 + exp(E_i))
+    weights = entropy * torch.log(1 + torch.exp(energy))
+    
+    # 3. 应用权重阈值筛选样本
+    k = max(1, int(batch_size * ratio))  # 至少选择1个样本
+    _, conf_indices = torch.topk(weights, k, largest=False, sorted=True)
+    
+    # 4. 获取高权重样本的logits和伪标签
+    _, pseudo_labels = torch.max(probs_dropout.detach(), dim=1)
+    conf_logits = logits[conf_indices]
+    conf_labels = pseudo_labels[conf_indices]
+    k = conf_logits.size(0)  # 实际选中的样本数量
+    
+    # 5. 计算logits间的余弦相似度矩阵
+    sim_matrix = F.cosine_similarity(
+        conf_logits.unsqueeze(1),  # [k, 1, num_classes]
+        conf_logits.unsqueeze(0),  # [1, k, num_classes]
+        dim=-1
+    )
+    
+    # 6. 创建正负样本掩码
+    # 正样本：相同伪标签且非自身
+    pos_mask = (conf_labels.unsqueeze(0) == conf_labels.unsqueeze(1)) & \
+               (~torch.eye(k, dtype=torch.bool, device=logits.device))
+    
+    # 负样本：不同伪标签
+    neg_mask = conf_labels.unsqueeze(0) != conf_labels.unsqueeze(1)
+    
+    # 7. 计算每个样本的正样本数量
+    pos_counts = pos_mask.sum(dim=1).float()  # [k]
+    valid_samples = pos_counts > 0  # 排除没有正样本的样本
+    
+    # 8. 初始化损失
+    total_loss = torch.tensor(0.0, device=logits.device)
+    valid_count = 0
+    
+    # 9. 遍历每个样本计算损失
+    for i in range(k):
+        if not valid_samples[i]:
+            continue  # 跳过没有正样本的样本
+            
+        # 获取当前样本的正样本索引
+        pos_indices = torch.where(pos_mask[i])[0]
+        
+        # 计算分子：正样本的指数相似度之和
+        numerator = torch.sum(torch.exp(sim_matrix[i, pos_indices] / temperature))
+        
+        # 获取当前样本的负样本索引
+        neg_indices = torch.where(neg_mask[i])[0]
+        
+        # 计算分母：负样本的指数相似度之和
+        denominator = torch.sum(torch.exp(sim_matrix[i, neg_indices] / temperature))
+        
+        # 计算损失项：-log(分子/分母)
+        loss_term = -torch.log(numerator / (denominator + 1e-8))  # 添加小量避免除零
+        
+        # 除以正样本数量（|pos(i)|）
+        loss_term /= pos_counts[i]
+        
+        # 累加损失
+        total_loss += loss_term
+        valid_count += 1
+    
+    # 10. 计算平均损失
+    if valid_count > 0:
+        return total_loss / valid_count
+    else:
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+
 def contrastive_loss_samples_selection_1(logits, ratio=0.75, temperature=0.07):
     """
     实现基于熵的对比损失函数
@@ -762,6 +845,53 @@ def _weighted_lcs_cons(input, cls_weight, thr=0., temperature=0.07):
     loss = loss[conf_indices]
     
     return loss
+
+
+def softmax_kl_loss(input_logits, target_logits):
+    """Takes softmax on both sides and returns KL divergence
+
+    Note:
+    - Returns the sum over all examples. Divide by the batch size afterwards
+      if you want the mean.
+    - Sends gradients to inputs but not the targets.
+    """
+    assert input_logits.size() == target_logits.size()
+    input_log_softmax = F.log_softmax(input_logits, dim=1)
+    target_softmax = F.softmax(target_logits, dim=1)
+
+    kl_div = F.kl_div(input_log_softmax, target_softmax, reduction='none')
+    return kl_div 
+
+
+def TSD_loss(logits, features, prototypes, ratio, temperature=2):
+    
+    features = F.normalize(features, dim=1)
+    batch_size = logits.size(0)
+    
+    # 1. 计算每个样本的能量和熵
+    energy = -temperature * torch.logsumexp(logits / temperature, dim=1)
+    entropy = _entropy_samples(logits)
+    
+    # 2. 计算样本权重: S_i * log(1 + exp(E_i))
+    weights = entropy * torch.log(1 + torch.exp(energy))
+    
+    # 3. 应用权重阈值筛选样本
+    k = max(1, int(batch_size * ratio))  # 至少选择1个样本
+    _, conf_indices = torch.topk(weights, k, largest=False, sorted=True)
+    
+    # 4. 获取高权重样本的logits和伪标签
+    conf_logits = logits[conf_indices]
+    conf_features = features[conf_indices]
+    
+    # 5. calcuate the pesudo label based on prototypes
+    dist = conf_features @ prototypes.T / temperature # [batch_size, num_classes] distance matrix
+
+    # calcuate the distillation loss
+    loss = softmax_kl_loss(conf_logits.detach(), dist).sum(1).mean(0)
+
+    return loss
+
+
 
 class MarginalEntropy(torch.nn.Module):
     def forward(self, logits):
@@ -1789,5 +1919,46 @@ class ConsSamples_selection_2(nn.Module):
         cons_loss = contrastive_loss_samples_selection_2(logits, ratio=self.ratio, temperature=self.temp)
 
         loss_sum = self.lambda_1 * cons_loss
+        
+        return  loss_sum
+    
+
+class ConsSamples_selection_dropout(nn.Module):
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, logits_dropout):
+        
+        cons_loss = contrastive_loss_samples_selection_dropout(logits, logits_dropout, ratio=self.ratio, temperature=self.temp)
+
+        loss_sum = self.lambda_1 * cons_loss
+        
+        return  loss_sum
+    
+
+
+class ConsSamples_selection_distillation(nn.Module):
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, features, prototypes):
+        
+        cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+        dis_loss = TSD_loss(logits, features, prototypes, self.ratio, temperature=self.temp)
+
+
+        loss_sum = self.lambda_1 * cons_loss + self.lambda_2 * dis_loss
         
         return  loss_sum

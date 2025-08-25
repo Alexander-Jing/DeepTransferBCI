@@ -20,7 +20,7 @@ from tl.utils.loss_proposed import MemorySoftplusEnergyAlignment, CE_MDR, Presud
         CaliE_MDR, CaliE_UKL, CE_KL, CaliE_KL, EnergyEntropy_selected, EnergyEntropy_selected_all, EnergyEntropy_selected_align, PresudoLabelEMA, PresudoLabelEMA_selection, \
         PresudoLabelEMA_energy, PresudoLabelEMA_symmetric, PresudoLabelEMA_lcs, EntropyMDREMA_lcs, CaliE_MDR_lcs, CaliE_MDR_lcs_selection, CaliE_MDR_lcs_cons, CaliE_MDR_lcs_ConsSamples, \
         CaliE_MDR_lcs_ConsSamplesFea, CE_KL_ConsSamplesFea, PresudoLabelEMA_SampleCons, ConsSamples_lcs, ConsSamples_weighted, ConsSamples, ConsSamples_selection, ConsSamples_selection_1, \
-        ConsSamples_selection_2, ConsSamples_selection_dropout
+        ConsSamples_selection_2, ConsSamples_selection_dropout, _entropy_samples, ConsSamples_selection_distillation
 from tl.utils.optimizer_proposed import build_optimizer
 
 pruning_methods = {
@@ -38,7 +38,7 @@ class proposed_TTA(nn.Module):
                  episodic=False, memory_bank_type='uhus', use_BN=False, use_buffer=True, fix_pruning_model=True,
                  pruning_strategy='l1_unstructured', pruning_module='conv', calculate_selection_mask=False,
                  category_uniform=True, record=False, metric_name='mean_probs_dropout', update_counter='each', return_type='xy', 
-                 num_dropout=20, updating_type="presudo_src", batch_size_online=8, align=True, presudo_source_center=True, mt=0.9):
+                 num_dropout=20, updating_type="presudo_src", batch_size_online=8, align=True, presudo_source_center=True, mt=0.9, temperature=2):
 
         super().__init__()
         self.model = model
@@ -69,12 +69,26 @@ class proposed_TTA(nn.Module):
         self.presudo_source_center = presudo_source_center
         self.loss_name = loss_name
         self.mt = mt 
+        self.temperature = temperature
+        self.EnergyAlignment = EnergyAlignment
 
         # memory
         self.memory = DropMemoryBank(capacity, num_classes, confidence_threshold, uncertainty_threshold,
                                      category_uniform)
 
         self.memory_copy = deepcopy(self.memory)
+
+        # add the prototypes to the memory buffer
+        if self.updating_type in ["cls_proto"]:
+            cls_weight = self.model[1].fc.weight.data.clone()
+            for i in range(num_classes):
+                # normalization 
+                normalized_weight = F.normalize(cls_weight[i], dim=0)
+                # add instance
+                current_instance = edict(data=normalized_weight.cpu(), prediction=i, uncertainty=0.0,
+                                     confidence=1.0)  # instance includes the feature, pesudo label, weights, and probability
+                self.memory.add_instance(current_instance) # add to the memory bank
+
 
         # loss function
         if loss_name == 'MemorySoftplusEnergyAlignment':
@@ -153,6 +167,8 @@ class proposed_TTA(nn.Module):
             self.loss_fn = ConsSamples_selection_2(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
         elif loss_name == 'ConsSamples_selection_dropout':
             self.loss_fn = ConsSamples_selection_dropout(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
+        elif loss_name == 'ConsSamples_selection_distillation':
+            self.loss_fn = ConsSamples_selection_distillation(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
         
 
         # optimizer
@@ -240,54 +256,51 @@ class proposed_TTA(nn.Module):
             if self.updating_type == "ema":
                 self.model_ema.eval()
                 if self.return_type=='xy':
-                    _, out = self.model_ema(x)
+                    fea, out = self.model_ema(x)
                 elif self.return_type == 'y':
                     out = self.model_ema(x)
             else:
                 self.model.eval()
                 if self.return_type=='xy':
-                    _, out = self.model(x)
+                    fea, out = self.model(x)
                 elif self.return_type == 'y':
                     out = self.model(x)
             
             prob = torch.softmax(out, dim=1)
+            energy = -self.temperature * torch.logsumexp(out / self.temperature, dim=1)
+            entropy = _entropy_samples(out)
+            weights = entropy * torch.log(1 + torch.exp(energy))
+
             pseudo_label = torch.argmax(prob, dim=1)
             pseudo_conf = torch.max(prob, dim=1)[0]
-            dropout_result = self.eval_dropout(x, out, prob, pseudo_label)
 
-            metric = dropout_result['consistency']
-
-            if self.record is not None:
-                self.record = dropout_result
-                self.record['pseudo_conf'] = pseudo_conf
 
         # update memory
         update_model_flag = False
         for i, data in enumerate(sample_test_origin): 
 
-            p_l = pseudo_label[i].item()
-            conf = pseudo_conf[i].item()
-            uncertainty = metric[i].item()
-            current_instance = edict(data=data.cpu(), prediction=p_l, uncertainty=uncertainty,
-                                     confidence=conf)
+            # add to the memory bank to calcuate the prototypes
+            if self.updating_type in ["cls_proto"]:
+                p_l = pseudo_label[i].item()
+                conf = pseudo_conf[i].item()
+                uncertainty = weights[i].item()
+                _fea = fea[i].detach().clone()
+                _fea = F.normalize(_fea, dim=0)  # normalize
+                current_instance = edict(data=_fea.cpu(), prediction=p_l, uncertainty=uncertainty,
+                                        confidence=conf)  # instance includes the feature, pesudo label, weights, and probability
+                self.memory.add_instance(current_instance) # add to the memory bank
 
-            if self.use_buffer and metric[
-                i].item() >= self.uncertainty_threshold:
-                self.memory.add_instance(current_instance) # the memory bank will be used for filtering 
-
+            # add to the online memory bank for updating
             if self.update_counter == 'each':
                 self.num_instance += 1
                 self.online_buffer.add_data(data)
             else:
-                if metric[i].item() >= self.uncertainty_threshold:
+                if weights[i].item() >= self.uncertainty_threshold:
                     self.num_instance += 1
 
-            if self.updating_type == "presudo_src":
-                if self.memory.get_occupancy() >= self.capacity and self.num_instance >= self.batch_size_online and self.num_instance % self.update_frequency == 0:
-                    update_model_flag = True
-            else:
-                if self.num_instance >= self.batch_size_online and self.num_instance % self.update_frequency == 0:
-                    update_model_flag = True
+            # whether to update the model
+            if self.num_instance >= self.batch_size_online and self.num_instance % self.update_frequency == 0:
+                update_model_flag = True
         
         # update model
         if update_model_flag:
@@ -305,16 +318,21 @@ class proposed_TTA(nn.Module):
         loss_fn = self.loss_fn
 
         # prepare the data from current batch and memory
-        pre_source_data, pre_source_uncertainty, pre_source_labels = deepcopy(self.memory.get_memory()) # use the filtered data from memory
+        if self.updating_type == "presudo_src":
+            pre_source_data, pre_source_uncertainty, pre_source_labels = deepcopy(self.memory.get_memory()) # use the filtered data from memory
         sup_data = deepcopy(batch_data)
+        if self.updating_type in ["cls_proto"]:
+            prototypes = deepcopy(self.memory.get_prototypes(ratio=self.EnergyAlignment.ratio))
+
 
         if len(sup_data) > 0:
             
             # prepare the data from current batch and memory
             sup_data = torch.stack(sup_data)
-            pre_source_data = torch.stack(pre_source_data)
             sup_data = sup_data.cuda(non_blocking=True)
-            pre_source_data = pre_source_data.cuda(non_blocking=True)
+            if self.updating_type in ["presudo_src"]:
+                pre_source_data = torch.stack(pre_source_data)
+                pre_source_data = pre_source_data.cuda(non_blocking=True)
 
             # use the EA for alignment
             if self.align:
@@ -322,10 +340,11 @@ class proposed_TTA(nn.Module):
                 sqrtRefEA = sqrtRefEA.cuda(non_blocking=True)
                 sup_data = torch.matmul(sqrtRefEA, sup_data)
                 # sup_data = sup_data.permute(1, 2, 0, 3)
-                pre_source_data = torch.matmul(sqrtRefEA, pre_source_data)
-                # pre_source_data = pre_source_data.permute(1, 2, 0, 3)
+                if self.updating_type in ["presudo_src"]:
+                    pre_source_data = torch.matmul(sqrtRefEA, pre_source_data)
+                    # pre_source_data = pre_source_data.permute(1, 2, 0, 3)
             
-            if self.presudo_source_center:
+            if self.updating_type in ["presudo_src"]:
                 if self.return_type=='xy':
                     feas_of_data, preds_of_data = self.model(pre_source_data)
                 elif self.return_type == 'y':
@@ -439,6 +458,8 @@ class proposed_TTA(nn.Module):
                         loss = loss_fn(preds_of_data, feas_of_data)
                     elif self.loss_name in ['ConsSamples_selection_dropout']:
                         loss = loss_fn(preds_of_data, logits_dropout)
+                    elif self.loss_name in ["ConsSamples_selection_distillation"]:
+                        loss = loss_fn(preds_of_data, feas_of_data, prototypes)
                     else:
                         loss = loss_fn(preds_of_data)
 
@@ -447,6 +468,25 @@ class proposed_TTA(nn.Module):
                     loss.backward()
 
                     self.optimizer.step()
+                
+                elif self.updating_type in ["cls_proto"]:
+                    
+                    if self.return_type=='xy':
+                        feas_of_data, preds_of_data = self.model(sup_data)
+                    elif self.return_type == 'y':
+                        preds_of_data = self.model(sup_data)
+
+                    if self.loss_name in ["ConsSamples_selection_distillation"]:
+                        loss = loss_fn(preds_of_data, feas_of_data, prototypes.cuda())
+                    else:
+                        loss = loss_fn(preds_of_data)
+
+                    self.optimizer.zero_grad()
+
+                    loss.backward()
+
+                    self.optimizer.step()
+
             
             
     def update_ema_variables(self, ema_model, model, alpha_teacher):

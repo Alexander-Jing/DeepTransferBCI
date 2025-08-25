@@ -15,7 +15,7 @@ from tl.utils.dataloader import read_mi_combine_tar
 from tl.utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist, build_optimizer
 from tl.utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
-from tl.models.proposed_method_8 import proposed_TTA
+from tl.models.proposed_method_9 import proposed_TTA
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 import gc
