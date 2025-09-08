@@ -892,6 +892,42 @@ def TSD_loss(logits, features, prototypes, ratio, temperature=2):
     return loss
 
 
+def Weighted_TSD_loss(logits, features, prototypes, ratio, temperature=2):
+    
+    features = F.normalize(features, dim=1)
+    batch_size = logits.size(0)
+    
+    # 1. 计算每个样本的能量和熵
+    energy = -temperature * torch.logsumexp(logits / temperature, dim=1)
+    entropy = _entropy_samples(logits)
+    
+    # 2. 计算样本权重: S_i * log(1 + exp(E_i))
+    weights = entropy * torch.log(1 + torch.exp(energy))
+    
+    # 3. 应用权重阈值筛选样本
+    k = max(1, int(batch_size * ratio))  # 至少选择1个样本
+    _, conf_indices = torch.topk(weights, k, largest=False, sorted=True)
+    
+    # 4. 获取高权重样本的logits和伪标签
+    conf_logits = logits[conf_indices]
+    conf_features = features[conf_indices]
+    
+    # 5. calcuate the pesudo label based on prototypes
+    dist = conf_features @ prototypes.T / temperature # [batch_size, num_classes] distance matrix
+
+    # 6. calcuate the distillation loss
+    sample_losses = softmax_kl_loss(conf_logits.detach(), dist)  # 返回形状应为[k]或[k, num_classes]
+    
+    conf_weights = _entropy_samples(dist)
+    # 7. weighted loss
+    if sample_losses.dim() > 1:
+        sample_losses = sample_losses.sum(1)
+    
+    # weighted loss
+    weighted_loss = (conf_weights * sample_losses).sum() / (conf_weights.sum() + 1e-8)
+    
+    return weighted_loss
+
 
 class MarginalEntropy(torch.nn.Module):
     def forward(self, logits):
@@ -1432,6 +1468,43 @@ class CaliE_MDR_lcs_ConsSamples(nn.Module):
         
         return  loss_sum
 
+class CE_KL_lcs_ConsSamples(nn.Module):
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, cls_weight):
+        
+        cons_loss = contrastive_loss_samples(logits, thr=0.0, temperature=self.temp)
+
+        loss_sum = self.lambda_1 * _entropy(logits) + self.lambda_2 * _kl_loss(logits) + self.lambda_3 * cons_loss
+        
+        return  loss_sum
+
+class CE_KL_lcs_ConsSamples_selection(nn.Module):
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, cls_weight):
+        
+        cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+
+        loss_sum = self.lambda_1 * _entropy(logits) + self.lambda_2 * _kl_loss(logits) + self.lambda_3 * cons_loss
+        
+        return  loss_sum
+
+
 class CaliE_MDR_lcs_ConsSamplesFea(nn.Module):
     def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
         super().__init__()
@@ -1886,6 +1959,25 @@ class ConsSamples_selection(nn.Module):
         
         return  loss_sum
 
+class ConsSamples_selection_two_stage(nn.Module):
+    # special version for two stage model updating
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits):
+        
+        cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+
+        loss_sum = self.lambda_3 * cons_loss
+        
+        return  loss_sum
+
 class ConsSamples_selection_1(nn.Module):
     def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
         super().__init__()
@@ -1957,6 +2049,28 @@ class ConsSamples_selection_distillation(nn.Module):
         
         cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
         dis_loss = TSD_loss(logits, features, prototypes, self.ratio, temperature=self.temp)
+
+
+        loss_sum = self.lambda_1 * cons_loss + self.lambda_2 * dis_loss
+        
+        return  loss_sum
+
+
+class Weighted_ConsSamples_selection_distillation(nn.Module):
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, features, prototypes):
+        
+        cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+        # en_loss = _neg_weighted_mutual_information_on_marginal(logits, 1.0)
+        dis_loss = Weighted_TSD_loss(logits, features, prototypes, self.ratio, temperature=self.temp)
 
 
         loss_sum = self.lambda_1 * cons_loss + self.lambda_2 * dis_loss

@@ -261,7 +261,7 @@
             "name": "Python: TTA-BCNI2014001-4-all-proposed",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_16.py",
+            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_18.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -285,11 +285,12 @@
                 "--batch_size_online", "8",
                 "--stride", "8",
                 "--use_BN", "False",
-                "--loss_func", "ConsSamples_selection_distillation",
+                "--loss_func", "CE_KL,ConsSamples_selection_two_stage",
                 //"--presudo_src", "False",
                 "--selection_ratio", "0.75",
-                "--updating_type", "cls_proto",
+                "--updating_type", "entropy",
                 "--mt", "0.9",
+                "--loss_weights", "1.0, 1.0, 1.0"
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"

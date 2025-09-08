@@ -751,3 +751,6 @@ def build_optimizer(args):
 
     return optimizer
 
+
+def float_list(arg):
+    return list(map(float, arg.split(',')))
