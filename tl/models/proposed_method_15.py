@@ -21,7 +21,7 @@ from tl.utils.loss_proposed import MemorySoftplusEnergyAlignment, CE_MDR, Presud
         PresudoLabelEMA_energy, PresudoLabelEMA_symmetric, PresudoLabelEMA_lcs, EntropyMDREMA_lcs, CaliE_MDR_lcs, CaliE_MDR_lcs_selection, CaliE_MDR_lcs_cons, CaliE_MDR_lcs_ConsSamples, \
         CaliE_MDR_lcs_ConsSamplesFea, CE_KL_ConsSamplesFea, PresudoLabelEMA_SampleCons, ConsSamples_lcs, ConsSamples_weighted, ConsSamples, ConsSamples_selection, ConsSamples_selection_1, \
         ConsSamples_selection_2, ConsSamples_selection_dropout, _entropy_samples, ConsSamples_selection_distillation, Weighted_ConsSamples_selection_distillation, CE_KL_lcs_ConsSamples, CE_KL_lcs_ConsSamples_selection, \
-        ConsSamples_selection_two_stage, ConsSamples_selection_two_stage_weighted, ConsSamples_selection_two_stage_weighted_1, ConsSamples_selection_two_stage_weighted_2, ConsSamples_selection_two_stage_weighted_3, ConsSamples_selection_two_stage_weighted_4
+        ConsSamples_selection_two_stage, ConsSamples_selection_two_stage_weighted, ConsSamples_selection_two_stage_weighted_1, ConsSamples_selection_two_stage_weighted_2, ConsSamples_selection_two_stage_weighted_3, ConsSamples_selection_two_stage_weighted_4, ConsSamples_selection_two_stage_weighted_4_1
 from tl.utils.optimizer_proposed import build_optimizer
 from tl.utils.network import backbone_net
 from tl.utils.adaptiveLR_proposed import AdaptiveLRScheduler, AdaptiveLRScheduler_1
@@ -297,7 +297,7 @@ class proposed_TTA(nn.Module):
                 """
 
         # return outputs
-        return dict(logits=out)
+        return fea, out
 
     @torch.enable_grad()
     def update_model(self, batch_data, sqrtRefEA):
@@ -450,6 +450,9 @@ class proposed_TTA(nn.Module):
                             loss = loss_fn(preds_of_data, logits_dropout)
                         elif self.loss_name in ["ConsSamples_selection_distillation"]:
                             loss = loss_fn(preds_of_data, feas_of_data, self.prototypes)
+                        elif self.loss_name in ["ConsSamples_selection_two_stage_weighted","ConsSamples_selection_two_stage_weighted_1","ConsSamples_selection_two_stage_weighted_2",\
+                                                "ConsSamples_selection_two_stage_weighted_3","ConsSamples_selection_two_stage_weighted_4","ConsSamples_selection_two_stage_weighted_4_1"]:
+                            loss = loss_fn(preds_of_data, preds_of_data.clone().detach())
                         else:
                             loss = loss_fn(preds_of_data)
 
@@ -506,7 +509,7 @@ class proposed_TTA(nn.Module):
                         elif self.return_type == 'y':
                             preds_of_data_1 = self.model(sup_data)
                         
-                        if self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted","ConsSamples_selection_two_stage_weighted_1","ConsSamples_selection_two_stage_weighted_2","ConsSamples_selection_two_stage_weighted_3","ConsSamples_selection_two_stage_weighted_4"]: 
+                        if self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted","ConsSamples_selection_two_stage_weighted_1","ConsSamples_selection_two_stage_weighted_2","ConsSamples_selection_two_stage_weighted_3","ConsSamples_selection_two_stage_weighted_4","ConsSamples_selection_two_stage_weighted_4_1"]: 
                             loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach())
                         else:
                             loss_1 = loss_fn_1(preds_of_data_1)
@@ -914,6 +917,8 @@ def loss_prepare(loss_name, EnergyAlignment):
         return ConsSamples_selection_two_stage_weighted_3(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
     elif loss_name == 'ConsSamples_selection_two_stage_weighted_4':
         return ConsSamples_selection_two_stage_weighted_4(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
+    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1':
+        return ConsSamples_selection_two_stage_weighted_4_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale)
     
     elif loss_name == 'ConsSamples_selection_1':
         return ConsSamples_selection_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)

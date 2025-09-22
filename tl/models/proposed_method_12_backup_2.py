@@ -21,7 +21,7 @@ from tl.utils.loss_proposed import MemorySoftplusEnergyAlignment, CE_MDR, Presud
         PresudoLabelEMA_energy, PresudoLabelEMA_symmetric, PresudoLabelEMA_lcs, EntropyMDREMA_lcs, CaliE_MDR_lcs, CaliE_MDR_lcs_selection, CaliE_MDR_lcs_cons, CaliE_MDR_lcs_ConsSamples, \
         CaliE_MDR_lcs_ConsSamplesFea, CE_KL_ConsSamplesFea, PresudoLabelEMA_SampleCons, ConsSamples_lcs, ConsSamples_weighted, ConsSamples, ConsSamples_selection, ConsSamples_selection_1, \
         ConsSamples_selection_2, ConsSamples_selection_dropout, _entropy_samples, ConsSamples_selection_distillation, Weighted_ConsSamples_selection_distillation, CE_KL_lcs_ConsSamples, CE_KL_lcs_ConsSamples_selection, \
-        ConsSamples_selection_two_stage, ConsSamples_selection_two_stage_weighted, ConsSamples_selection_two_stage_weighted_1, ConsSamples_selection_two_stage_weighted_2, ConsSamples_selection_two_stage_weighted_3, ConsSamples_selection_two_stage_weighted_4
+        ConsSamples_selection_two_stage, ConsSamples_selection_two_stage_weighted, ConsSamples_selection_two_stage_weighted_1, ConsSamples_selection_two_stage_weighted_2
 from tl.utils.optimizer_proposed import build_optimizer
 from tl.utils.network import backbone_net
 from tl.utils.adaptiveLR_proposed import AdaptiveLRScheduler, AdaptiveLRScheduler_1
@@ -122,8 +122,6 @@ class proposed_TTA(nn.Module):
         # state copy
         if self.updating_type in ["ema"]: 
             self.model_ema = deepcopy(self.model)
-        if self.updating_type in ["entropy_ema"]: 
-            self.model_ema = deepcopy(self.model)
         if self.updating_type in ["entropy_ensamble"]:
             self.model_initial = deepcopy(self.model) 
             self.initial_reference = {}
@@ -207,7 +205,7 @@ class proposed_TTA(nn.Module):
         # inference
         # batch data
         with torch.no_grad():
-            if self.updating_type in ["ema","entropy_ema"]:
+            if self.updating_type == "ema":
                 self.model_ema.eval()
                 if self.return_type=='xy':
                     fea, out = self.model_ema(x)
@@ -272,9 +270,8 @@ class proposed_TTA(nn.Module):
             for _ in range(self.steps):
                 self.update_model(self.online_buffer.get_data(), sqrtRefEA)
                 
+
             if self.updating_type == "ema":
-                self.model_ema = self.update_ema_variables(ema_model=self.model_ema, model=self.model, alpha_teacher=self.mt)
-            if self.updating_type == "entropy_ema":
                 self.model_ema = self.update_ema_variables(ema_model=self.model_ema, model=self.model, alpha_teacher=self.mt)
             if self.updating_type == "entropy_ensamble":
                 for name, param in self.model_initial.named_parameters():
@@ -478,7 +475,7 @@ class proposed_TTA(nn.Module):
                         self.optimizer.step()
             else:  # two stage updating
                 if self.paras_optim['name'] == 'Adam':
-                    if self.updating_type in ["entropy", "entropy_ensamble", "entropy_ema"]:    
+                    if self.updating_type in ["entropy", "entropy_ensamble"]:    
                         # first step
                         if self.return_type=='xy':
                             feas_of_data, preds_of_data = self.model(sup_data)
@@ -506,7 +503,7 @@ class proposed_TTA(nn.Module):
                         elif self.return_type == 'y':
                             preds_of_data_1 = self.model(sup_data)
                         
-                        if self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted","ConsSamples_selection_two_stage_weighted_1","ConsSamples_selection_two_stage_weighted_2","ConsSamples_selection_two_stage_weighted_3","ConsSamples_selection_two_stage_weighted_4"]: 
+                        if self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted","ConsSamples_selection_two_stage_weighted_1","ConsSamples_selection_two_stage_weighted_2"]: 
                             loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach())
                         else:
                             loss_1 = loss_fn_1(preds_of_data_1)
@@ -910,11 +907,6 @@ def loss_prepare(loss_name, EnergyAlignment):
         return ConsSamples_selection_two_stage_weighted_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
     elif loss_name == 'ConsSamples_selection_two_stage_weighted_2':
         return ConsSamples_selection_two_stage_weighted_2(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
-    elif loss_name == 'ConsSamples_selection_two_stage_weighted_3':
-        return ConsSamples_selection_two_stage_weighted_3(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
-    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4':
-        return ConsSamples_selection_two_stage_weighted_4(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
-    
     elif loss_name == 'ConsSamples_selection_1':
         return ConsSamples_selection_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
     elif loss_name == 'ConsSamples_selection_2':

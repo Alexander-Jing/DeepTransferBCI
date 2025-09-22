@@ -450,6 +450,9 @@ class proposed_TTA(nn.Module):
                             loss = loss_fn(preds_of_data, logits_dropout)
                         elif self.loss_name in ["ConsSamples_selection_distillation"]:
                             loss = loss_fn(preds_of_data, feas_of_data, self.prototypes)
+                        elif self.loss_name in ["ConsSamples_selection_two_stage_weighted","ConsSamples_selection_two_stage_weighted_1","ConsSamples_selection_two_stage_weighted_2",\
+                                                "ConsSamples_selection_two_stage_weighted_3","ConsSamples_selection_two_stage_weighted_4"]:
+                            loss = loss_fn(preds_of_data, preds_of_data.clone().detach())
                         else:
                             loss = loss_fn(preds_of_data)
 

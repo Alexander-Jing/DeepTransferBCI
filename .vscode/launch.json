@@ -261,7 +261,7 @@
             "name": "Python: TTA-BCNI2014001-4-all-proposed",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_18.py",
+            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_22.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -285,12 +285,13 @@
                 "--batch_size_online", "8",
                 "--stride", "8",
                 "--use_BN", "False",
-                "--loss_func", "CE_KL,ConsSamples_selection_two_stage",
+                "--loss_func", "CE_KL,ConsSamples_selection_two_stage_weighted_4_1",
                 //"--presudo_src", "False",
-                "--selection_ratio", "0.75",
+                "--selection_ratio", "1.0",
                 "--updating_type", "entropy",
-                "--mt", "0.9",
-                "--loss_weights", "1.0, 1.0, 1.0"
+                "--mt", "0.0",
+                "--loss_weights", "1.0, 1.0, 1.0",
+                "--scale", "5.0",
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
@@ -370,17 +371,52 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--dataset_name", "WBCIC-SHU-3C",
+                // "--dataset_name", "WBCIC-SHU-3C",
+                "--dataset_name", "BNCI2014001-4-all",
                 "--data_save", "False",
                 "--data_path", "./data/",
                 "--data_path_MI", "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/",
-                "--log_path", "./logs/Baselines-WBCIC-SHU-3C-e300-b64/sotta-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/",
+                // "--log_path", "./logs/Baselines-WBCIC-SHU-3C-e300-b64/proposed/proposed_50_BNoff_batch8stride8_CE_KL_lcs_ConsSamples_selection_twoStage_weighted_lr0.001-5/",
+                // "--log_path", "./logs/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_50_BNoff_batch8stride8_CE_KL_lcs_ConsSamples_selection_twoStage_weighted_lr0.001-1",
+                "--log_path", "./logs/Baselines-001-all-e300-b64/ttime-BNCI2014001-all-EEGNet-4,2-e300-b64",
                 "--use_pretrained_model", "True",
                 "--finetune", "False",
                 "--momentum", "False",
                 "--momentum_param", "0.5",
                 "--visualfile_csv", "None", //"WBCIC-SHU-3C_Tent_seed_1_pred.csv",
-                "--visualfile_trial", "300",
+                // "--visualfile_trial", "300",
+                "--visualfile_trial", "288",
+                "--visual_ensamble", "True",
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: Evaluation for methods_days",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/visualization/test_time_days.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "WBCIC-SHU-3C",
+                //"--dataset_name", "BNCI2014001-4-all",
+                "--data_save", "False",
+                "--data_path", "./data/",
+                "--data_path_MI", "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/",
+                // "--log_path", "./logs/Baselines-WBCIC-SHU-3C-e300-b64/proposed/proposed_50_BNoff_batch8stride8_CE_KL_lcs_ConsSamples_selection_twoStage_weighted_lr0.001-5/",
+                // "--log_path", "./logs/Baselines-WBCIC-SHU-3C-e300-b64/source-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/",
+                // "--log_path", "./logs/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_50_BNoff_batch8stride8_CE_KL_lcs_ConsSamples_selection_twoStage_weighted_lr0.001-11",
+                "--log_path", "./logs/Baselines-001-all-e300-b64/Source-BNCI2014001-4-all-EEGNet-4,2-e300-b64",
+                "--use_pretrained_model", "True",
+                "--finetune", "False",
+                "--momentum", "False",
+                "--momentum_param", "0.5",
+                "--visualfile_csv", "None", //"WBCIC-SHU-3C_Tent_seed_1_pred.csv",
+                // "--visualfile_trial", "300",
+                "--visualfile_trial", "288",
                 "--visual_ensamble", "True",
             ],
             "env": {
@@ -418,6 +454,49 @@
                 "--use_BN", "False",
                 "--loss_func", "CaliE_KL",
                 "--presudo_src", "False",
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: t-sne visulization",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/visualization/tsne_visualization.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                //"--dataset_name", "BNCI2014001-4-all",
+                "--dataset_name", "WBCIC-SHU-3C",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--data_path_MI", "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/",
+                //"--log_path", "./logs/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_50_BNoff_batch8stride8_CE_KL_lcs_ConsSamples_selection_twoStage_weighted_lr0.001-1-visualization-source/",
+                "--log_path", "./logs/Baselines-WBCIC-SHU-3C-e300-b64/proposed/proposed_50_BNoff_batch8stride8_CE_KL_lcs_ConsSamples_selection_twoStage_weighted_lr0.001-3-visualization-source/",
+                "--use_pretrained_model", "True",
+                "--finetune", "False",
+                "--momentum", "False",
+                "--momentum_param", "0.5",
+                "--gpu_idx", "1",
+                "--align", "True",
+                "--batch_size", "64",
+                "--lr", "0.001",
+                "--lr_online", "0.001",
+                "--epoch", "300",
+                "--backbone", "EEGNet-4,2",
+                "--param_runs", "./runs_debug/",
+                "--batch_size_online", "8",
+                "--stride", "8",
+                "--use_BN", "False",
+                "--loss_func", "CE_KL,ConsSamples_selection_two_stage_weighted_4",
+                //"--presudo_src", "False",
+                "--selection_ratio", "1.0",
+                "--updating_type", "entropy",
+                "--mt", "0.0",
+                "--loss_weights", "1.0, 1.0, 1.0", 
+                "--perplexity", "30"
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"

@@ -20,11 +20,8 @@ from tl.utils.loss_proposed import MemorySoftplusEnergyAlignment, CE_MDR, Presud
         CaliE_MDR, CaliE_UKL, CE_KL, CaliE_KL, EnergyEntropy_selected, EnergyEntropy_selected_all, EnergyEntropy_selected_align, PresudoLabelEMA, PresudoLabelEMA_selection, \
         PresudoLabelEMA_energy, PresudoLabelEMA_symmetric, PresudoLabelEMA_lcs, EntropyMDREMA_lcs, CaliE_MDR_lcs, CaliE_MDR_lcs_selection, CaliE_MDR_lcs_cons, CaliE_MDR_lcs_ConsSamples, \
         CaliE_MDR_lcs_ConsSamplesFea, CE_KL_ConsSamplesFea, PresudoLabelEMA_SampleCons, ConsSamples_lcs, ConsSamples_weighted, ConsSamples, ConsSamples_selection, ConsSamples_selection_1, \
-        ConsSamples_selection_2, ConsSamples_selection_dropout, _entropy_samples, ConsSamples_selection_distillation, Weighted_ConsSamples_selection_distillation, CE_KL_lcs_ConsSamples, CE_KL_lcs_ConsSamples_selection, \
-        ConsSamples_selection_two_stage, ConsSamples_selection_two_stage_weighted, ConsSamples_selection_two_stage_weighted_1, ConsSamples_selection_two_stage_weighted_2, ConsSamples_selection_two_stage_weighted_3, ConsSamples_selection_two_stage_weighted_4
+        ConsSamples_selection_2, ConsSamples_selection_dropout, ConsSamples_selection_two_stage, _entropy_samples, ConsSamples_selection_distillation, Weighted_ConsSamples_selection_distillation, CE_KL_lcs_ConsSamples, CE_KL_lcs_ConsSamples_selection
 from tl.utils.optimizer_proposed import build_optimizer
-from tl.utils.network import backbone_net
-from tl.utils.adaptiveLR_proposed import AdaptiveLRScheduler, AdaptiveLRScheduler_1
 
 pruning_methods = {
     "l1_unstructured": prune.l1_unstructured,
@@ -93,6 +90,15 @@ class proposed_TTA(nn.Module):
                 self.memory.add_instance(current_instance) # add to the memory bank
             self.prototypes = cls_weight  # save the prototypes for ema based updating
 
+
+        # loss function
+        if not self.paras_optim['two_stage']:
+            self.loss_fn = loss_prepare(loss_name, EnergyAlignment)
+        else:
+            losses = loss_name.split(',')  # if two losses, use a "," to split, e.g. "CE_KL, lcs_ConsSamples"
+            self.loss_fn = loss_prepare(loss_name=losses[0].strip(), EnergyAlignment=EnergyAlignment)
+            self.loss_fn_1 = loss_prepare(loss_name=losses[1].strip(), EnergyAlignment=EnergyAlignment)
+
         # optimizer
         if use_BN:
             self.configure_model()
@@ -103,41 +109,9 @@ class proposed_TTA(nn.Module):
         except:
             print("optimizer does not have set_model method")
 
-        # loss function
-        if not self.paras_optim['two_stage']:
-            self.loss_fn = loss_prepare(loss_name, EnergyAlignment)
-        else:
-            losses = loss_name.split(',')  # if two losses, use a "," to split, e.g. "CE_KL, lcs_ConsSamples"
-            self.losses = losses
-            self.loss_fn = loss_prepare(loss_name=losses[0].strip(), EnergyAlignment=EnergyAlignment)
-            self.loss_fn_1 = loss_prepare(loss_name=losses[1].strip(), EnergyAlignment=EnergyAlignment)
-            if self.losses[1].strip() in ['ConsSamples_selection_two_stage_adaptiveLR', 'ConsSamples_selection_two_stage_adaptiveLR_1','ConsSamples_selection_two_stage_adaptiveLR_2']:
-                if self.losses[1].strip() == 'ConsSamples_selection_two_stage_adaptiveLR':
-                    self.lr_scheduler = AdaptiveLRScheduler(self.optimizer, base_lr=self.paras_optim.lr)
-                if self.losses[1].strip() == 'ConsSamples_selection_two_stage_adaptiveLR_1': 
-                    self.lr_scheduler = AdaptiveLRScheduler_1(self.optimizer, base_lr=self.paras_optim.lr)
-                if self.losses[1].strip() == 'ConsSamples_selection_two_stage_adaptiveLR_2': 
-                    self.lr_scheduler = AdaptiveLRScheduler_1(self.optimizer, base_lr=self.paras_optim.lr)
-
         # state copy
-        if self.updating_type in ["ema"]: 
+        if self.updating_type == "ema": 
             self.model_ema = deepcopy(self.model)
-        if self.updating_type in ["entropy_ema"]: 
-            self.model_ema = deepcopy(self.model)
-        if self.updating_type in ["entropy_ensamble"]:
-            self.model_initial = deepcopy(self.model) 
-            self.initial_reference = {}
-            for name, param in self.model_initial.named_parameters():
-                self.initial_reference[name] = param.data.clone()
-
-            current_state = self.model.state_dict()
-            initial_state = self.model_initial.state_dict()
-
-            # 详细比较每一个键值对
-            for key in current_state:
-                if not torch.allclose(current_state[key], initial_state[key]):
-                    print(f"初始：状态不匹配: {key}")
-        
         self.model_state, self.optimizer_state = deepcopy(model.state_dict()), deepcopy(self.optimizer.state_dict())
         assert steps > 0, "tent requires >= 1 step(s) to forward and update"
 
@@ -207,7 +181,7 @@ class proposed_TTA(nn.Module):
         # inference
         # batch data
         with torch.no_grad():
-            if self.updating_type in ["ema","entropy_ema"]:
+            if self.updating_type == "ema":
                 self.model_ema.eval()
                 if self.return_type=='xy':
                     fea, out = self.model_ema(x)
@@ -274,38 +248,15 @@ class proposed_TTA(nn.Module):
                 
             if self.updating_type == "ema":
                 self.model_ema = self.update_ema_variables(ema_model=self.model_ema, model=self.model, alpha_teacher=self.mt)
-            if self.updating_type == "entropy_ema":
-                self.model_ema = self.update_ema_variables(ema_model=self.model_ema, model=self.model, alpha_teacher=self.mt)
-            if self.updating_type == "entropy_ensamble":
-                for name, param in self.model_initial.named_parameters():
-                    if not torch.equal(param.data, self.initial_reference[name]):
-                        print(f"Warning: Initial model parameter {name} has been modified!")
-                self.model = self.update_with_initial(
-                    current_model=self.model,
-                    initial_model=self.model_initial, 
-                    alpha=self.mt 
-                )
-                
-                """
-                current_state_1 = self.model.state_dict()
-                initial_state_1 = self.model_initial.state_dict()
 
-                # 详细比较每一个键值对
-                for key in current_state_1:
-                    if not torch.allclose(current_state_1[key], initial_state_1[key]):
-                        print(f"更新{self.num_instance}：状态不匹配: {key}")
-                """
 
         # return outputs
         return dict(logits=out)
 
     @torch.enable_grad()
     def update_model(self, batch_data, sqrtRefEA):
-        if not self.paras_optim['two_stage']:
-            loss_fn = self.loss_fn
-        else:
-            loss_fn = self.loss_fn
-            loss_fn_1 = self.loss_fn_1
+        loss_fn = self.loss_fn
+        loss_fn_1 = self.loss_fn_1
 
         # prepare the data from current batch and memory
         if self.updating_type == "presudo_src":
@@ -478,50 +429,40 @@ class proposed_TTA(nn.Module):
                         self.optimizer.step()
             else:  # two stage updating
                 if self.paras_optim['name'] == 'Adam':
-                    if self.updating_type in ["entropy", "entropy_ensamble", "entropy_ema"]:    
-                        # first step
-                        if self.return_type=='xy':
-                            feas_of_data, preds_of_data = self.model(sup_data)
-                        elif self.return_type == 'y':
-                            preds_of_data = self.model(sup_data)
-                        
-                        if self.losses[1].strip() in ["ConsSamples_selection_two_stage_adaptiveLR","ConsSamples_selection_two_stage_adaptiveLR_1"]:  
-                            _newLR = self.lr_scheduler.update_lr_entropy(preds_of_data.clone().detach())
+                    
+                    # first step
+                    if self.return_type=='xy':
+                        feas_of_data, preds_of_data = self.model(sup_data)
+                    elif self.return_type == 'y':
+                        preds_of_data = self.model(sup_data)
+                    
+                    loss = loss_fn(preds_of_data)
+                    self.optimizer.zero_grad()
+                    loss.backward()
+                    self.optimizer.step()
 
-                        loss = loss_fn(preds_of_data)
-                        self.optimizer.zero_grad()
-                        loss.backward()
-                        self.optimizer.step()
+                    # zero grad
+                    self.optimizer.zero_grad()
 
-                        # zero grad
-                        self.optimizer.zero_grad()
+                    # second step
+                    if self.return_type=='xy':
+                        feas_of_data_1, preds_of_data_1 = self.model(sup_data)
+                    elif self.return_type == 'y':
+                        preds_of_data_1 = self.model(sup_data)
+                    
+                    loss_1 = loss_fn_1(preds_of_data_1)
+                    loss_1.backward()
+                    self.optimizer.step()
 
-                        if self.losses[1].strip() in ["ConsSamples_selection_two_stage_adaptiveLR_2"]:
-                            original_lr = self.optimizer.param_groups[0]['lr']  # save the original lr
-                            _newLR = self.lr_scheduler.update_lr_entropy(preds_of_data.clone().detach())
+                    self.optimizer.zero_grad()
 
-                        # second step
-                        if self.return_type=='xy':
-                            feas_of_data_1, preds_of_data_1 = self.model(sup_data)
-                        elif self.return_type == 'y':
-                            preds_of_data_1 = self.model(sup_data)
-                        
-                        if self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted","ConsSamples_selection_two_stage_weighted_1","ConsSamples_selection_two_stage_weighted_2","ConsSamples_selection_two_stage_weighted_3","ConsSamples_selection_two_stage_weighted_4"]: 
-                            loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach())
-                        else:
-                            loss_1 = loss_fn_1(preds_of_data_1)
-                        loss_1.backward()
-                        self.optimizer.step()
-
-                        self.optimizer.zero_grad()
-
-                        if self.losses[1].strip() in ["ConsSamples_selection_two_stage_adaptiveLR_2"]:
-                            for param_group in self.optimizer.param_groups:
-                               param_group['lr'] = original_lr
 
             
             
-
+    def update_ema_variables(self, ema_model, model, alpha_teacher):
+        for ema_param, param in zip(ema_model.parameters(), model.parameters()):
+            ema_param.data[:] = alpha_teacher * ema_param[:].data[:] + (1 - alpha_teacher) * param[:].data[:]
+        return ema_model
 
     def check_updates(self):
         is_update = is_updated(self.feature_extractor, self.feature_extractor_init)
@@ -634,42 +575,6 @@ class proposed_TTA(nn.Module):
     
         return class_centers, unique_labels, missing_classes_flag
 
-    def update_ema_variables(self, ema_model, model, alpha_teacher):
-        for ema_param, param in zip(ema_model.parameters(), model.parameters()):
-            ema_param.data[:] = alpha_teacher * ema_param[:].data[:] + (1.0 - alpha_teacher) * param[:].data[:]
-        return ema_model
-    
-    def update_with_initial(self, current_model, initial_model, alpha):
-        for current_param, initial_param in zip(current_model.parameters(), initial_model.parameters()):
-            # current_param = α * current_param + (1-α) * initial_param
-            current_param.data.mul_(alpha).add_(initial_param.data, alpha=(1.0 - alpha))
-        return current_model
-    """def update_with_initial(self, current_model, initial_model, alpha):
-        # 添加调试信息
-        # print(f"Updating with alpha={alpha}")
-        with torch.no_grad():
-            for current_param, initial_param in zip(current_model.parameters(), initial_model.parameters()):
-                # 保存更新前的值用于比较
-                before_update = current_param.data.clone()
-
-                # 执行更新
-                current_param.data.mul_(alpha).add_(initial_param.data, alpha=(1.0 - alpha))
-
-                # 检查更新结果
-                if alpha == 0:
-                    # 当 α=0 时，当前参数应该等于初始参数
-                    if not torch.equal(current_param.data, initial_param.data):
-                        print("Error: Parameter was not correctly reset to initial value!")
-                    
-                    current_state = current_model.state_dict()
-                    initial_state = initial_model.state_dict()
-
-                    # 详细比较每一个键值对
-                    for key in current_state:
-                        if not torch.allclose(current_state[key], initial_state[key]):
-                            print(f"状态不匹配: {key}")
-
-        return current_model"""
 
 def split_up_model(model, arch_name: str, dataset_name: str):
     """
@@ -902,19 +807,8 @@ def loss_prepare(loss_name, EnergyAlignment):
         return ConsSamples(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
     elif loss_name == 'ConsSamples_selection':
         return ConsSamples_selection(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
-    elif loss_name in ['ConsSamples_selection_two_stage', 'ConsSamples_selection_two_stage_adaptiveLR', 'ConsSamples_selection_two_stage_adaptiveLR_1','ConsSamples_selection_two_stage_adaptiveLR_2']:
+    elif loss_name == 'ConsSamples_selection_two_stage':
         return ConsSamples_selection_two_stage(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
-    elif loss_name == 'ConsSamples_selection_two_stage_weighted':
-        return ConsSamples_selection_two_stage_weighted(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
-    elif loss_name == 'ConsSamples_selection_two_stage_weighted_1':
-        return ConsSamples_selection_two_stage_weighted_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
-    elif loss_name == 'ConsSamples_selection_two_stage_weighted_2':
-        return ConsSamples_selection_two_stage_weighted_2(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
-    elif loss_name == 'ConsSamples_selection_two_stage_weighted_3':
-        return ConsSamples_selection_two_stage_weighted_3(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
-    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4':
-        return ConsSamples_selection_two_stage_weighted_4(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
-    
     elif loss_name == 'ConsSamples_selection_1':
         return ConsSamples_selection_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
     elif loss_name == 'ConsSamples_selection_2':

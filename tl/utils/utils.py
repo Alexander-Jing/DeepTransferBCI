@@ -754,3 +754,79 @@ def build_optimizer(args):
 
 def float_list(arg):
     return list(map(float, arg.split(',')))
+
+
+def save_features_predictions(feas, predict, y_true, args):
+    """
+    Save features, predictions, and true labels to compressed .npz file
+    Handles specific input shapes: 
+        feas: (N, 1, D) → saves as (N, D)
+        predict: (N, 1) → saves as (N,)
+        y_true: (N, 1) → saves as (N,)
+    
+    Parameters:
+        feas: Feature array with shape (N, 1, D)
+        predict: Prediction array with shape (N, 1)
+        y_true: True label array with shape (N, 1)
+        args: Argument object containing path configuration
+        
+    Returns:
+        file_path: Path to saved .npz file
+    """
+    # Remove singleton dimensions for efficient storage
+    feas_squeezed = feas.squeeze(1)  # (N, D)
+    predict_squeezed = predict.squeeze(1)  # (N,)
+    y_true_squeezed = y_true.squeeze(1)  # (N,)
+    
+    # Create output directory if not exists
+    file_dir = os.path.join(str(args.result_dir), "features")
+    os.makedirs(file_dir, exist_ok=True)
+    
+    # Generate filename with experiment parameters
+    file_name = f"{args.data_name}_{args.method}_seed_{args.SEED}_sub_{args.idt}.npz"
+    file_path = os.path.join(file_dir, file_name)
+    
+    # Save arrays to compressed file
+    np.savez_compressed(
+        file_path,
+        feas=feas_squeezed,
+        predict=predict_squeezed,
+        y_true=y_true_squeezed
+    )
+    
+    print(f"Features and predictions saved to: {file_path}")
+    return file_path
+
+
+def load_features_predictions(args):
+    """
+    Load features, predictions, and true labels from .npz file using args
+    Parameters:
+        args: Argument object containing:
+            result_dir: Root directory for results
+            data_name: Name of the dataset
+            method: Method/algorithm name
+            SEED: Random seed value
+            idt: Additional identifier (optional)
+    Returns:
+        feas: Feature array with shape (N, D)
+        predict: Prediction array with shape (N,)
+        y_true: True label array with shape (N,)
+    """
+    # Generate file path dynamically from args
+    file_dir = os.path.join(str(args.result_dir), "features")
+    file_name = f"{args.data_name}_{args.method}_seed_{args.SEED}_sub_{args.idt}.npz"
+    file_path = os.path.join(file_dir, file_name)
+    
+    # Validate file existence
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Feature file not found at: {file_path}")
+    
+    # Load data from compressed file
+    data = np.load(file_path)
+    feas = data['feas']        # Shape (N, D)
+    predict = data['predict']  # Shape (N,)
+    y_true = data['y_true']    # Shape (N,)
+    
+    print(f"Loaded features and predictions from: {file_path}")
+    return feas, predict, y_true

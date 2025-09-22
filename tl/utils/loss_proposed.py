@@ -14,6 +14,21 @@ def _entropy_samples(logits):
     entropy = -torch.sum(probs * torch.log(probs + 1e-5), dim=1)
     return entropy
 
+def _entropy_samples_normalized(logits):
+    probs = logits.softmax(dim=1)
+    entropy = -torch.sum(probs * torch.log(probs + 1e-5), dim=1)
+    C = logits.size(1)  # categories
+    C_tensor = torch.tensor(C, dtype=torch.float, device=logits.device)
+    max_entropy = torch.log(C_tensor)
+
+    if C == 1:
+        normalized_entropy = torch.zeros_like(entropy)
+    else:
+        # normilize the entropy
+        normalized_entropy = entropy / max_entropy
+    
+    return normalized_entropy
+
 def _energy_samples(logits):
     energy = -torch.logsumexp(logits,dim=1)
     return energy
@@ -1975,6 +1990,160 @@ class ConsSamples_selection_two_stage(nn.Module):
         cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
 
         loss_sum = self.lambda_3 * cons_loss
+        
+        return  loss_sum
+
+class ConsSamples_selection_two_stage_weighted(nn.Module):
+    # special version for two stage model updating
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, logits_initial):
+        
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+        
+        cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+
+        loss_sum = self.lambda_3 * (1-entropy_avg) * cons_loss
+        
+        return  loss_sum
+
+class ConsSamples_selection_two_stage_weighted_1(nn.Module):
+    # special version for two stage model updating
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, logits_initial):
+        
+        batch_size = logits.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits)
+        entropy_avg = torch.mean(entropy_normalized)
+        
+        cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+
+        loss_sum = self.lambda_3 * (1-entropy_avg) * cons_loss
+        
+        return  loss_sum
+
+class ConsSamples_selection_two_stage_weighted_2(nn.Module):
+    # special version for two stage model updating
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, logits_initial):
+        
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+        
+        cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+
+        weight_ = torch.exp(-entropy_avg / self.temp)
+
+        loss_sum = self.lambda_3 * weight_ * cons_loss
+        
+        return  loss_sum
+
+class ConsSamples_selection_two_stage_weighted_3(nn.Module):
+    # special version for two stage model updating
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, logits_initial):
+        
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+        
+        cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+
+        weight_ = torch.exp(-entropy_avg * self.temp)
+
+        loss_sum = self.lambda_3 * weight_ * cons_loss
+        
+        return  loss_sum
+
+class ConsSamples_selection_two_stage_weighted_4(nn.Module):
+    # special version for two stage model updating
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+
+    def forward(self, logits, logits_initial):
+        
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+        
+        cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+
+        scale = 5.0
+        transformed_input = scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+        
+        # 通过 Sigmoid 约束输出到 [0,1]
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+        loss_sum = self.lambda_3 * weight_ * cons_loss
+        
+        return  loss_sum
+
+class ConsSamples_selection_two_stage_weighted_4_1(nn.Module):
+    # special version for two stage model updating
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+        self.scale = scale
+
+    def forward(self, logits, logits_initial):
+        
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+        
+        cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+        
+        # 通过 Sigmoid 约束输出到 [0,1]
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+        loss_sum = self.lambda_3 * weight_ * cons_loss
         
         return  loss_sum
 
