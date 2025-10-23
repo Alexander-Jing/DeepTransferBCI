@@ -747,6 +747,84 @@ def contrastive_loss_samples_weighted(logits, thr=0.4, temperature=0.07):
         return total_loss  # 只有一个分量有效
 
 
+def contrastive_prototype_loss(logits, features, prototypes, ratio, temperature=2):
+    """
+    对比原型损失函数
+    
+    参数:
+        logits: 模型输出的logits, shape=[batch_size, num_classes]
+        features: 样本特征向量, shape=[batch_size, feature_dim]
+        prototypes: 每个类别的原型中心, shape=[num_classes, feature_dim]
+        ratio: 高权重样本的比例
+        temperature: 温度系数, 控制对比损失的锐度
+    
+    返回:
+        loss: 对比原型损失值
+    """
+    
+    features = F.normalize(features, dim=1)
+    batch_size = logits.size(0)
+    
+    # 1. 计算每个样本的能量和熵
+    energy = -temperature * torch.logsumexp(logits / temperature, dim=1)
+    entropy = _entropy_samples(logits)
+    
+    # 2. 计算样本权重: S_i * log(1 + exp(E_i))
+    weights = entropy * torch.log(1 + torch.exp(energy))
+    
+    # 3. 应用权重阈值筛选样本
+    k = max(1, int(batch_size * ratio))  # 至少选择1个样本
+    _, conf_indices = torch.topk(weights, k, largest=False, sorted=True)
+    
+    # 4. 获取高权重样本的logits和特征
+    conf_logits = logits[conf_indices]
+    conf_features = features[conf_indices]
+    
+    # 5. 计算对比原型损失
+    # 5.1 获取伪标签（选择logits最大的类别）
+    pseudo_labels = torch.argmax(conf_logits, dim=1)  # shape=[k]
+    
+    # 5.2 归一化原型向量
+    prototypes_norm = F.normalize(prototypes, dim=1)  # shape=[num_classes, feature_dim]
+    
+    # 5.3 计算样本特征与所有原型的相似度
+    similarity_matrix = torch.matmul(conf_features, prototypes_norm.t())  # shape=[k, num_classes]
+    
+    # 5.4 为每个样本构建正负样本掩码
+    batch_size_k = conf_features.size(0)
+    num_classes = prototypes.size(0)
+    
+    # 正样本掩码：同类原型为正样本
+    positive_mask = torch.zeros(batch_size_k, num_classes, dtype=torch.bool, device=features.device)
+    positive_mask[torch.arange(batch_size_k), pseudo_labels] = True
+    
+    # 负样本掩码：其他类原型为负样本
+    negative_mask = ~positive_mask
+    
+    # 5.5 提取正样本相似度
+    positive_similarities = similarity_matrix[positive_mask]  # shape=[k]
+    
+    # 5.6 计算对比损失
+    losses = []
+    for i in range(batch_size_k):
+        # 当前样本的正样本相似度
+        pos_sim = positive_similarities[i]
+        
+        # 当前样本的负样本相似度
+        neg_sims = similarity_matrix[i][negative_mask[i]]
+        
+        # InfoNCE形式的对比损失[5](@ref)
+        numerator = torch.exp(pos_sim / temperature)
+        denominator = numerator + torch.sum(torch.exp(neg_sims / temperature))
+        
+        sample_loss = -torch.log(numerator / denominator)
+        losses.append(sample_loss)
+    
+    # 5.7 计算批量损失均值
+    loss = torch.stack(losses).mean()
+    
+    return loss
+
 
 def _marginal_entropy(logits):
     probs = logits.softmax(1)
@@ -2146,6 +2224,70 @@ class ConsSamples_selection_two_stage_weighted_4_1(nn.Module):
         loss_sum = self.lambda_3 * weight_ * cons_loss
         
         return  loss_sum
+
+class ConsSamples_selection_two_stage_weighted_4_1_double(nn.Module):
+    # special version for two stage model updating
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+        self.scale = scale
+
+    def forward(self, logits, logits_initial, feas):
+        
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+        
+        cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+
+        cons_loss_1 = contrastive_loss_samplefeatures(logits, feas, thr=0.4, temperature=self.temp)
+
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+        
+        # 通过 Sigmoid 约束输出到 [0,1]
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+        loss_sum = self.lambda_3 * weight_ * (cons_loss + cons_loss_1)
+        
+        return  loss_sum
+
+
+class ConsSamples_selection_two_stage_weighted_4_1_double_1(nn.Module):
+    # special version for two stage model updating
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+        self.scale = scale
+
+    def forward(self, logits, logits_initial, feas, prototypes):
+        
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+        
+        cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+
+        cons_loss_1 = contrastive_prototype_loss(logits, feas, prototypes, ratio=self.ratio, temperature=self.temp)
+
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+        
+        # 通过 Sigmoid 约束输出到 [0,1]
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+        loss_sum = self.lambda_3 * weight_ * (self.lambda_1 * cons_loss + self.lambda_2 * cons_loss_1)
+        
+        return  loss_sum
+
 
 class ConsSamples_selection_1(nn.Module):
     def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):

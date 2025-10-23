@@ -22,7 +22,7 @@ from tl.utils.loss_proposed import MemorySoftplusEnergyAlignment, CE_MDR, Presud
         CaliE_MDR_lcs_ConsSamplesFea, CE_KL_ConsSamplesFea, PresudoLabelEMA_SampleCons, ConsSamples_lcs, ConsSamples_weighted, ConsSamples, ConsSamples_selection, ConsSamples_selection_1, \
         ConsSamples_selection_2, ConsSamples_selection_dropout, _entropy_samples, ConsSamples_selection_distillation, Weighted_ConsSamples_selection_distillation, CE_KL_lcs_ConsSamples, CE_KL_lcs_ConsSamples_selection, \
         ConsSamples_selection_two_stage, ConsSamples_selection_two_stage_weighted, ConsSamples_selection_two_stage_weighted_1, ConsSamples_selection_two_stage_weighted_2, ConsSamples_selection_two_stage_weighted_3, ConsSamples_selection_two_stage_weighted_4, ConsSamples_selection_two_stage_weighted_4_1, \
-            ConsSamples_selection_two_stage_weighted_4_1_double
+            ConsSamples_selection_two_stage_weighted_4_1_double, ConsSamples_selection_two_stage_weighted_4_1_double_1
 from tl.utils.optimizer_proposed import build_optimizer
 from tl.utils.network import backbone_net
 from tl.utils.adaptiveLR_proposed import AdaptiveLRScheduler, AdaptiveLRScheduler_1
@@ -93,7 +93,7 @@ class proposed_TTA(nn.Module):
                                      confidence=1.0)  # instance includes the feature, pesudo label, weights, and probability
                 self.memory.add_instance(current_instance) # add to the memory bank
             self.prototypes = cls_weight  # save the prototypes for ema based updating
-
+        
         # optimizer
         if use_BN:
             self.configure_model()
@@ -119,6 +119,17 @@ class proposed_TTA(nn.Module):
                     self.lr_scheduler = AdaptiveLRScheduler_1(self.optimizer, base_lr=self.paras_optim.lr)
                 if self.losses[1].strip() == 'ConsSamples_selection_two_stage_adaptiveLR_2': 
                     self.lr_scheduler = AdaptiveLRScheduler_1(self.optimizer, base_lr=self.paras_optim.lr)
+            # need of prototypes
+            if self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_double_1"]:
+                cls_weight = self.model[1].fc.weight.data.clone()
+                for i in range(num_classes):
+                    # normalization 
+                    normalized_weight = F.normalize(cls_weight[i], dim=0)
+                    # add instance
+                    current_instance = edict(data=normalized_weight.cpu(), prediction=i, uncertainty=0.0,
+                                        confidence=1.0)  # instance includes the feature, pesudo label, weights, and probability
+                    self.memory.add_instance(current_instance) # add to the memory bank
+                self.prototypes = cls_weight  # save the prototypes for ema based updating
 
         # state copy
         if self.updating_type in ["ema"]: 
@@ -234,21 +245,31 @@ class proposed_TTA(nn.Module):
         for i, data in enumerate(sample_test_origin): 
 
             # add to the memory bank to calcuate the prototypes
-            if self.updating_type in ["cls_proto"]:
-                p_l = pseudo_label[i].item()
-                conf = pseudo_conf[i].item()
-                uncertainty = weights[i].item()
-                _fea = fea[i].detach().clone()
-                _fea = F.normalize(_fea, dim=0)  # normalize
-                current_instance = edict(data=_fea.cpu(), prediction=p_l, uncertainty=uncertainty,
-                                        confidence=conf)  # instance includes the feature, pesudo label, weights, and probability
-                self.online_buffer.add_instance(current_instance) # add to the memory bank
+            if not self.paras_optim['two_stage']:
+                if self.updating_type in ["cls_proto"]:
+                    p_l = pseudo_label[i].item()
+                    conf = pseudo_conf[i].item()
+                    uncertainty = weights[i].item()
+                    _fea = fea[i].detach().clone()
+                    _fea = F.normalize(_fea, dim=0)  # normalize
+                    current_instance = edict(data=_fea.cpu(), prediction=p_l, uncertainty=uncertainty,
+                                            confidence=conf)  # instance includes the feature, pesudo label, weights, and probability
+                    self.online_buffer.add_instance(current_instance) # add to the memory bank
+            else:
+                if self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_double_1"]:
+                    p_l = pseudo_label[i].item()
+                    conf = pseudo_conf[i].item()
+                    uncertainty = weights[i].item()
+                    _fea = fea[i].detach().clone()
+                    _fea = F.normalize(_fea, dim=0)  # normalize
+                    current_instance = edict(data=_fea.cpu(), prediction=p_l, uncertainty=uncertainty,
+                                            confidence=conf)  # instance includes the feature, pesudo label, weights, and probability
+                    self.memory.add_instance(current_instance) # add to the memory bank
 
             # add to the online memory bank for updating
             if self.update_counter == 'each':
                 self.num_instance += 1
                 self.online_buffer.add_data(data)
-                self.online_buffer
             else:
                 if weights[i].item() >= self.uncertainty_threshold:
                     self.num_instance += 1
@@ -312,9 +333,14 @@ class proposed_TTA(nn.Module):
         if self.updating_type == "presudo_src":
             pre_source_data, pre_source_uncertainty, pre_source_labels = deepcopy(self.memory.get_memory()) # use the filtered data from memory
         sup_data = deepcopy(batch_data)
-        if self.updating_type in ["cls_proto"]:
-            prototypes = deepcopy(self.memory.get_prototypes(ratio=self.EnergyAlignment.ratio))
-            self.prototypes = self.mt * self.prototypes + (1-self.mt) * prototypes.cuda()
+        if not self.paras_optim['two_stage']:
+            if self.updating_type in ["cls_proto"]:
+                prototypes = deepcopy(self.memory.get_prototypes(ratio=self.EnergyAlignment.ratio))
+                self.prototypes = self.mt * self.prototypes + (1-self.mt) * prototypes.cuda()
+        else:
+            if self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_double_1"]:
+                prototypes = deepcopy(self.memory.get_prototypes(ratio=self.EnergyAlignment.ratio))
+                self.prototypes = self.mt * self.prototypes + (1-self.mt) * prototypes.cuda()
 
         if len(sup_data) > 0:
             
@@ -514,6 +540,53 @@ class proposed_TTA(nn.Module):
                             loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach())
                         elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_double"]:
                             loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), feas_of_data_1)
+                        elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_double_1"]:
+                            loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), feas_of_data_1, self.prototypes)
+                        else:
+                            loss_1 = loss_fn_1(preds_of_data_1)
+                        loss_1.backward()
+                        self.optimizer.step()
+
+                        self.optimizer.zero_grad()
+
+                        if self.losses[1].strip() in ["ConsSamples_selection_two_stage_adaptiveLR_2"]:
+                            for param_group in self.optimizer.param_groups:
+                               param_group['lr'] = original_lr
+                    
+                    if self.updating_type in ["entropy_review"]:    
+                        # first step
+                        if self.return_type=='xy':
+                            feas_of_data, preds_of_data = self.model(sup_data)
+                        elif self.return_type == 'y':
+                            preds_of_data = self.model(sup_data)
+                        
+                        if self.losses[1].strip() in ["ConsSamples_selection_two_stage_adaptiveLR","ConsSamples_selection_two_stage_adaptiveLR_1"]:  
+                            _newLR = self.lr_scheduler.update_lr_entropy(preds_of_data.clone().detach())
+
+                        loss = loss_fn(preds_of_data)
+                        self.optimizer.zero_grad()
+                        loss.backward()
+                        self.optimizer.step()
+
+                        # zero grad
+                        self.optimizer.zero_grad()
+
+                        if self.losses[1].strip() in ["ConsSamples_selection_two_stage_adaptiveLR_2"]:
+                            original_lr = self.optimizer.param_groups[0]['lr']  # save the original lr
+                            _newLR = self.lr_scheduler.update_lr_entropy(preds_of_data.clone().detach())
+
+                        # second step
+                        if self.return_type=='xy':
+                            feas_of_data_1, preds_of_data_1 = self.model(sup_data)
+                        elif self.return_type == 'y':
+                            preds_of_data_1 = self.model(sup_data)
+                        
+                        if self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted","ConsSamples_selection_two_stage_weighted_1","ConsSamples_selection_two_stage_weighted_2","ConsSamples_selection_two_stage_weighted_3","ConsSamples_selection_two_stage_weighted_4","ConsSamples_selection_two_stage_weighted_4_1"]: 
+                            loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach())
+                        elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_double"]:
+                            loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), feas_of_data_1)
+                        elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_double_1"]:
+                            loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), feas_of_data_1, self.prototypes)
                         else:
                             loss_1 = loss_fn_1(preds_of_data_1)
                         loss_1.backward()
@@ -924,6 +997,8 @@ def loss_prepare(loss_name, EnergyAlignment):
         return ConsSamples_selection_two_stage_weighted_4_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale)
     elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_double':
         return ConsSamples_selection_two_stage_weighted_4_1_double(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale)
+    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_double_1':
+        return ConsSamples_selection_two_stage_weighted_4_1_double_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale)
 
     elif loss_name == 'ConsSamples_selection_1':
         return ConsSamples_selection_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
