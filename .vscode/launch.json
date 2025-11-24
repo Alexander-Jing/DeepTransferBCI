@@ -261,7 +261,7 @@
             "name": "Python: TTA-BCNI2014001-4-all-proposed",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_23.py",
+            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_28.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -285,13 +285,19 @@
                 "--batch_size_online", "8",
                 "--stride", "8",
                 "--use_BN", "False",
-                "--loss_func", "CE_KL,ConsSamples_selection_two_stage_weighted_4_1_double_1",
+                "--loss_func", "CE_KL_review_weighted_3,ConsSamples_selection_two_stage_weighted_4_1_review_4_1",
                 //"--presudo_src", "False",
                 "--selection_ratio", "1.0",
-                "--updating_type", "entropy",
-                "--mt", "0.0",
+                "--updating_type", "entropy_review",
+                "--mt", "0.1",
                 "--loss_weights", "1.0, 1.0, 1.0",
-                "--scale", "5.0",
+                "--scale", "10.0",
+                "--confidence_threshold", "0.45 ",
+                "--entropy_threshold", "0.55",
+                "--calibrate_probs", "False",
+                "--memory_type", "DropMemoryBank_review",
+                "--memory_review", "get_memory_review",
+
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
@@ -378,7 +384,7 @@
                 "--data_path_MI", "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/",
                 // "--log_path", "./logs/Baselines-WBCIC-SHU-3C-e300-b64/proposed/proposed_50_BNoff_batch8stride8_CE_KL_lcs_ConsSamples_selection_twoStage_weighted_lr0.001-5/",
                 // "--log_path", "./logs/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_50_BNoff_batch8stride8_CE_KL_lcs_ConsSamples_selection_twoStage_weighted_lr0.001-1",
-                "--log_path", "./logs/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_50_BNoff_batch8stride8_CE_KL_lcs_ConsSamples_selection_twoStage_weighted_lr0.001-1-visualization-source",
+                "--log_path", "./logs/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_53_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-12-1-params/proposed_53_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p3",
                 "--use_pretrained_model", "True",
                 "--finetune", "False",
                 "--momentum", "False",

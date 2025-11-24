@@ -16,7 +16,7 @@ from tl.utils.dataloader import read_mi_combine_tar
 from tl.utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist, build_optimizer, save_features_predictions
 from tl.utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
-from tl.models.proposed_method_17 import proposed_TTA
+from tl.models.proposed_method_20 import proposed_TTA
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 import gc
@@ -52,7 +52,7 @@ def motta_func(loader, model, args, balanced=True):
                         update_frequency=args.update_frequency, update_counter=args.update_counter, EnergyAlignment = args.EnergyAlignment,
                         confidence_threshold=args.confidence_threshold, uncertainty_threshold=args.uncertainty_threshold, prune_ratio=args.prune_ratio, pruning_strategy=args.pruning_strategy,
                         pruning_module=args.pruning_module, metric_name=args.metric_name, arch=args.backbone, use_BN=args.use_BN,
-                        dataset=args.data_name, enable_robustBN=False, loss_name=args.loss_name, paras_loss={"lambda_info": 0.}, updating_type=args.updating_type, batch_size_online=args.test_batch, steps=args.steps, mt=args.mt)
+                        dataset=args.data_name, enable_robustBN=False, loss_name=args.loss_name, paras_loss={"lambda_info": 0.}, updating_type=args.updating_type, batch_size_online=args.test_batch, steps=args.steps, mt=args.mt, calibrate_probs=args.calibrate_probs)
     proposed_TTA_model.cuda()
 
     # loop through test data stream one by one
@@ -328,6 +328,9 @@ if __name__ == '__main__':
     parser.add_argument('--mt', type=float, default=0.9, help='the momentum value for teacher model')
     parser.add_argument('--loss_weights', type=float_list, default=[1.0, 1.0, 1.0], help='weights for 3 loss components')
     parser.add_argument('--scale', type=float, default=5.0, help='the scale value for ConsSamples_selection_two_stage_weighted_4')
+    parser.add_argument('--confidence_threshold', type=float, default=0.75, help='threshold for high-confidence sample selection')
+    parser.add_argument('--entropy_threshold', type=float, default=0.6, help='threshold for low-entropy sample selection')
+    parser.add_argument('--calibrate_probs', type=str2bool, default=False, help='use CalibratedPseudoLabels for calibration')
     
     args = parser.parse_args()
 
@@ -358,6 +361,9 @@ if __name__ == '__main__':
     mt = args.mt
     loss_weights = args.loss_weights
     scale =args.scale
+    confidence_threshold = args.confidence_threshold
+    entropy_threshold = args.entropy_threshold
+    calibrate_probs = args.calibrate_probs
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -461,6 +467,8 @@ if __name__ == '__main__':
             args.data_env = 'local'
 
         # hyperparameters
+        args.confidence_threshold = confidence_threshold
+        args.entropy_threshold = entropy_threshold
         args.paras_optim = Box({
             "name": "Adam",   
             "lr": args.lr_online,
@@ -474,14 +482,16 @@ if __name__ == '__main__':
             "lambda_2": loss_weights[1],
             "lambda_3": loss_weights[2],
             "temp": 2.0,
-            "scale":scale
+            "scale":scale,
+            "confidence_threshold":confidence_threshold,
+            "num_class":class_num,
+            "entropy_threshold": entropy_threshold,
         })
         args.capacity = 64
         args.bn_alpha = 0.1
+        args.uncertainty_threshold = 0.75
         args.update_frequency = args.stride
         args.update_counter = 'each'
-        args.confidence_threshold = 0.33
-        args.uncertainty_threshold = 0.75
         args.prune_ratio = 0.5
         args.pruning_strategy = 'ln_structured'
         args.pruning_module = 'conv'
@@ -489,6 +499,7 @@ if __name__ == '__main__':
         args.use_BN = use_BN
         args.loss_name = loss_func
         args.updating_type = updating_type
+        args.calibrate_probs = calibrate_probs
 
         total_acc = []
 
@@ -559,4 +570,4 @@ if __name__ == '__main__':
         dct = dct.append(result_dct, ignore_index=True)
 
     # save results to csv
-    dct.to_csv(log_path + str(args.method) + ".csv")
+    dct.to_csv(os.path.join(log_path, str(args.method) + ".csv"))

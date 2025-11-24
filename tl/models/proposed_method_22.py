@@ -14,7 +14,7 @@ from torch.nn.utils import prune
 from easydict import EasyDict as edict
 
 # from robustbench.model_zoo.architectures.utils_architectures import normalize_model, ImageNormalizer
-from tl.utils.memory_proposed_1 import DropMemoryBank, OnlineBuffer, OnlineBufferInstance
+from tl.utils.memory_proposed_2 import DropMemoryBank, DropMemoryBank_review, DropMemoryBank_review_1, OnlineBuffer, OnlineBufferInstance
 from tl.utils.loss_proposed import MemorySoftplusEnergyAlignment, CE_MDR, PresudoLabelMemorySoftplusEnergyAlignment, MemorySoftplusEnergyWeightedAlignment, \
     MemorySoftplusEnergyRatioSortedAlignment, MemorySoftplusEnergyFeatureWeightedAlignment, MemorySoftplusEnergyWeightedAlignmentMDR, \
         CaliE_MDR, CaliE_UKL, CE_KL, CaliE_KL, EnergyEntropy_selected, EnergyEntropy_selected_all, EnergyEntropy_selected_align, PresudoLabelEMA, PresudoLabelEMA_selection, \
@@ -22,7 +22,9 @@ from tl.utils.loss_proposed import MemorySoftplusEnergyAlignment, CE_MDR, Presud
         CaliE_MDR_lcs_ConsSamplesFea, CE_KL_ConsSamplesFea, PresudoLabelEMA_SampleCons, ConsSamples_lcs, ConsSamples_weighted, ConsSamples, ConsSamples_selection, ConsSamples_selection_1, \
         ConsSamples_selection_2, ConsSamples_selection_dropout, _entropy_samples, ConsSamples_selection_distillation, Weighted_ConsSamples_selection_distillation, CE_KL_lcs_ConsSamples, CE_KL_lcs_ConsSamples_selection, \
         ConsSamples_selection_two_stage, ConsSamples_selection_two_stage_weighted, ConsSamples_selection_two_stage_weighted_1, ConsSamples_selection_two_stage_weighted_2, ConsSamples_selection_two_stage_weighted_3, ConsSamples_selection_two_stage_weighted_4, ConsSamples_selection_two_stage_weighted_4_1, \
-            ConsSamples_selection_two_stage_weighted_4_1_double, ConsSamples_selection_two_stage_weighted_4_1_double_1
+            ConsSamples_selection_two_stage_weighted_4_1_double, ConsSamples_selection_two_stage_weighted_4_1_double_1, CE_KL_review, CE_KL_review_weighted, CE_KL_review_weighted_1, CE_KL_review_weighted_2, CE_KL_review_weighted_3, CE_KL_review_weighted_4, CE_KL_review_weighted_5, ConsSamples_selection_two_stage_weighted_4_1_review, \
+            ConsSamples_selection_two_stage_weighted_4_1_review_1, ConsSamples_selection_two_stage_weighted_4_1_review_2, ConsSamples_selection_two_stage_weighted_4_1_review_3, CE_KL_review_weighted_3_1, ConsSamples_selection_two_stage_weighted_4_1_review_4, ConsSamples_selection_two_stage_weighted_4_1_review_4_1, CE_KL_review_weighted_3_2
+from tl.utils.calibration_proposed import CalibratedPseudoLabels
 from tl.utils.optimizer_proposed import build_optimizer
 from tl.utils.network import backbone_net
 from tl.utils.adaptiveLR_proposed import AdaptiveLRScheduler, AdaptiveLRScheduler_1
@@ -42,7 +44,8 @@ class proposed_TTA(nn.Module):
                  episodic=False, memory_bank_type='uhus', use_BN=False, use_buffer=True, fix_pruning_model=True,
                  pruning_strategy='l1_unstructured', pruning_module='conv', calculate_selection_mask=False,
                  category_uniform=True, record=False, metric_name='mean_probs_dropout', update_counter='each', return_type='xy', 
-                 num_dropout=20, updating_type="presudo_src", batch_size_online=8, align=True, presudo_source_center=True, mt=0.9, temperature=2):
+                 num_dropout=20, updating_type="presudo_src", batch_size_online=8, align=True, presudo_source_center=True, mt=0.9, temperature=2, calibrate_probs=False,
+                 memory_type='DropMemoryBank_review', memory_review='get_memory_review'):
 
         super().__init__()
         self.model = model
@@ -75,11 +78,18 @@ class proposed_TTA(nn.Module):
         self.mt = mt 
         self.temperature = temperature
         self.EnergyAlignment = EnergyAlignment
+        self.calibrate_probs = calibrate_probs
+        self.memory_type = memory_type
+        self.memory_review = memory_review
 
         # memory
-        self.memory = DropMemoryBank(capacity, num_classes, confidence_threshold, uncertainty_threshold,
+        if self.memory_type in ['DropMemoryBank_review']:
+            self.memory = DropMemoryBank_review(capacity, num_classes, confidence_threshold, uncertainty_threshold,
                                      category_uniform)
-
+        elif self.memory_type in ['DropMemoryBank_review_1']:
+            self.memory = DropMemoryBank_review_1(capacity, num_classes, confidence_threshold, uncertainty_threshold,
+                                     category_uniform)
+        
         self.memory_copy = deepcopy(self.memory)
 
         # add the prototypes to the memory buffer
@@ -163,6 +173,7 @@ class proposed_TTA(nn.Module):
         self.selection_mask = []
         self.online_buffer = OnlineBufferInstance(buffer_size=batch_size_online)
         self.batch_size_online = batch_size_online
+        self.probs_calibrated =  CalibratedPseudoLabels(n_classes=self.num_classes, device=self.device)
 
         if record:
             self.record = {}
@@ -265,6 +276,13 @@ class proposed_TTA(nn.Module):
                     current_instance = edict(data=_fea.cpu(), prediction=p_l, uncertainty=uncertainty,
                                             confidence=conf)  # instance includes the feature, pesudo label, weights, and probability
                     self.online_buffer.add_instance(current_instance) # add to the memory bank
+                if self.updating_type in ["entropy_review"]:
+                    p_l = pseudo_label[i].item()
+                    conf = pseudo_conf[i].item()
+                    uncertainty = weights[i].item()
+                    current_instance = edict(data=data, prediction=p_l, uncertainty=uncertainty,
+                                            logit=out[i].detach().clone(), confidence=conf)  # instance includes the feature, pesudo label, weights, and probability
+                    self.online_buffer.add_instance(current_instance) # add to the memory bank
 
             # add to the online memory bank for updating
             if self.update_counter == 'each':
@@ -301,7 +319,21 @@ class proposed_TTA(nn.Module):
                     for i, _instance in enumerate(self.online_buffer.get_instance()):
                         if i in selected_indices:
                             self.memory.add_instance(_instance)
-
+                if self.updating_type in ["entropy_review"]:
+                    # save the instances in the memory based on confidence threshold
+                    if self.calibrate_probs:
+                        logits_buffer = self.online_buffer.get_logits()
+                        _probs = torch.softmax(logits_buffer, dim=1)
+                        calibrated_probs = self.probs_calibrated.calibrate_probs(logits_buffer)
+                        confidences, _ = torch.max(calibrated_probs, dim=1)
+                    else:
+                        confidences = self.online_buffer.get_confidence()
+                    
+                    # Select instances with confidence above threshold
+                    for i, (_instance, confidence) in enumerate(zip(self.online_buffer.get_instance(), confidences)):
+                        if confidence > self.confidence_threshold:
+                            self.memory.add_instance(_instance)
+            
             for _ in range(self.steps):
                 self.update_model(self.online_buffer.get_data(), sqrtRefEA)
                 
@@ -339,6 +371,8 @@ class proposed_TTA(nn.Module):
         else:
             loss_fn = self.loss_fn
             loss_fn_1 = self.loss_fn_1
+            if self.updating_type in ["entropy_review"]:
+                loss_fn_0 = loss_prepare(loss_name="CE_KL", EnergyAlignment=self.EnergyAlignment)
 
         # prepare the data from current batch and memory
         if self.updating_type == "presudo_src":
@@ -353,6 +387,24 @@ class proposed_TTA(nn.Module):
                 prototypes = deepcopy(self.memory.get_prototypes(ratio=1.0))
                 self.prototypes = self.mt * self.prototypes + (1-self.mt) * prototypes.cuda()
 
+        if self.updating_type in ["entropy_review"]:
+            if self.memory_review in ['get_memory_review']:
+                review_data, review_data_logits, review_data_class = deepcopy(self.memory.get_memory_review(self.batch_size_online))
+            elif self.memory_review in ['get_memory_review_1']:
+                review_data, review_data_logits, review_data_class = deepcopy(self.memory.get_memory_review_1(self.batch_size_online))
+
+            if len(review_data) == 0:
+                # generate empty tensors
+                C,H,W = sup_data[0].shape
+                review_data = torch.empty((0, C, H, W)).cuda()
+                review_data_logits = torch.empty((0, self.num_classes)).cuda()
+                review_data_class = torch.empty((0,), dtype=torch.long).cuda()
+            else:
+                review_data = torch.stack(review_data).cuda()
+                review_data_logits = torch.stack(review_data_logits).cuda()
+                review_data_class = torch.tensor(review_data_class).cuda()
+            
+        
         if len(sup_data) > 0:
             
             # prepare the data from current batch and memory
@@ -371,6 +423,9 @@ class proposed_TTA(nn.Module):
                 if self.updating_type in ["presudo_src"]:
                     pre_source_data = torch.matmul(sqrtRefEA, pre_source_data)
                     # pre_source_data = pre_source_data.permute(1, 2, 0, 3)
+                if self.updating_type in ["entropy_review"]:
+                   review_data = torch.matmul(sqrtRefEA, review_data)
+
             
             if self.updating_type in ["presudo_src"]:
                 if self.return_type=='xy':
@@ -568,13 +623,25 @@ class proposed_TTA(nn.Module):
                         # first step
                         if self.return_type=='xy':
                             feas_of_data, preds_of_data = self.model(sup_data)
+                            if not review_data.shape[0] == 0:
+                                feas_of_data_review, preds_of_data_review = self.model(review_data)
+                            else:
+                                feas_of_data_review = torch.empty((0, feas_of_data.shape[1])).cuda()
+                                preds_of_data_review = torch.empty((0, self.num_classes)).cuda()
                         elif self.return_type == 'y':
                             preds_of_data = self.model(sup_data)
                         
-                        if self.losses[1].strip() in ["ConsSamples_selection_two_stage_adaptiveLR","ConsSamples_selection_two_stage_adaptiveLR_1"]:  
-                            _newLR = self.lr_scheduler.update_lr_entropy(preds_of_data.clone().detach())
+                        if self.num_instance % (self.update_frequency) == 0 and self.num_instance >= 4*self.batch_size_online:
 
-                        loss = loss_fn(preds_of_data)
+                            if self.losses[0].strip() in ["CE_KL_review"]: 
+                                loss = loss_fn(preds_of_data, preds_of_data_review, review_data_class)
+                            elif self.losses[0].strip() in ["CE_KL_review_weighted","CE_KL_review_weighted_1","CE_KL_review_weighted_2","CE_KL_review_weighted_3", "CE_KL_review_weighted_3_1", "CE_KL_review_weighted_3_2", "CE_KL_review_weighted_4", "CE_KL_review_weighted_5"]: 
+                                loss = loss_fn(preds_of_data, preds_of_data_review, review_data_class, review_data_logits)
+                            else:
+                                loss = loss_fn(preds_of_data)
+                        else: 
+                            loss = loss_fn_0(preds_of_data)
+                        
                         self.optimizer.zero_grad()
                         loss.backward()
                         self.optimizer.step()
@@ -582,13 +649,14 @@ class proposed_TTA(nn.Module):
                         # zero grad
                         self.optimizer.zero_grad()
 
-                        if self.losses[1].strip() in ["ConsSamples_selection_two_stage_adaptiveLR_2"]:
-                            original_lr = self.optimizer.param_groups[0]['lr']  # save the original lr
-                            _newLR = self.lr_scheduler.update_lr_entropy(preds_of_data.clone().detach())
-
                         # second step
                         if self.return_type=='xy':
                             feas_of_data_1, preds_of_data_1 = self.model(sup_data)
+                            if not review_data.shape[0] == 0:
+                                feas_of_data_review_1, preds_of_data_review_1 = self.model(review_data)
+                            else:
+                                feas_of_data_review_1 = torch.empty((0, feas_of_data.shape[1])).cuda()
+                                preds_of_data_review_1 = torch.empty((0, self.num_classes)).cuda()
                         elif self.return_type == 'y':
                             preds_of_data_1 = self.model(sup_data)
                         
@@ -598,6 +666,10 @@ class proposed_TTA(nn.Module):
                             loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), feas_of_data_1)
                         elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_double_1"]:
                             loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), feas_of_data_1, self.prototypes)
+                        elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_review","ConsSamples_selection_two_stage_weighted_4_1_review_1","ConsSamples_selection_two_stage_weighted_4_1_review_4","ConsSamples_selection_two_stage_weighted_4_1_review_4_1"]: 
+                            loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), preds_of_data_review_1) 
+                        elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_review_2", "ConsSamples_selection_two_stage_weighted_4_1_review_3"]: 
+                            loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), review_data_logits)                     
                         else:
                             loss_1 = loss_fn_1(preds_of_data_1)
                         loss_1.backward()
@@ -941,6 +1013,25 @@ def loss_prepare(loss_name, EnergyAlignment):
         return CaliE_UKL(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, temp=EnergyAlignment.temp)
     elif loss_name == 'CE_KL':
         return CE_KL(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, temp=EnergyAlignment.temp)
+    elif loss_name == 'CE_KL_review':
+        return CE_KL_review(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
+    elif loss_name == 'CE_KL_review_weighted':
+        return CE_KL_review_weighted(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale)
+    elif loss_name == 'CE_KL_review_weighted_1':
+        return CE_KL_review_weighted_1(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale)
+    elif loss_name == 'CE_KL_review_weighted_2':
+        return CE_KL_review_weighted_2(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class)
+    elif loss_name == 'CE_KL_review_weighted_3':
+        return CE_KL_review_weighted_3(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold)
+    elif loss_name == 'CE_KL_review_weighted_3_1':
+        return CE_KL_review_weighted_3_1(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold)
+    elif loss_name == 'CE_KL_review_weighted_3_2':
+        return CE_KL_review_weighted_3_2(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold)
+    elif loss_name == 'CE_KL_review_weighted_4':
+        return CE_KL_review_weighted_4(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold)
+    elif loss_name == 'CE_KL_review_weighted_5':
+        return CE_KL_review_weighted_5(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold)
+    
     elif loss_name == 'CaliE_KL':
         return CaliE_KL(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, temp=EnergyAlignment.temp)
     elif loss_name == 'EnergyEntropy_selected':
@@ -1010,7 +1101,19 @@ def loss_prepare(loss_name, EnergyAlignment):
         return ConsSamples_selection_two_stage_weighted_4_1_double(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale)
     elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_double_1':
         return ConsSamples_selection_two_stage_weighted_4_1_double_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale)
-
+    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_review':
+        return ConsSamples_selection_two_stage_weighted_4_1_review(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale)
+    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_review_1':
+        return ConsSamples_selection_two_stage_weighted_4_1_review_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale)
+    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_review_2':
+        return ConsSamples_selection_two_stage_weighted_4_1_review_2(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale)
+    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_review_3':
+        return ConsSamples_selection_two_stage_weighted_4_1_review_3(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale)
+    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_review_4':
+        return ConsSamples_selection_two_stage_weighted_4_1_review_4(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale)
+    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_review_4_1':
+        return ConsSamples_selection_two_stage_weighted_4_1_review_4_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale)
+    
     elif loss_name == 'ConsSamples_selection_1':
         return ConsSamples_selection_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
     elif loss_name == 'ConsSamples_selection_2':

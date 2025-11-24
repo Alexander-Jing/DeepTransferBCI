@@ -360,6 +360,498 @@ def contrastive_loss_samples_selection(logits, ratio=0.75, temperature=0.07):
         return torch.tensor(0.0, device=logits.device, requires_grad=True)
 
 
+def contrastive_loss_samples_selection_review(logits, review_data_logits, ratio=0.75, temperature=0.07):
+    """
+    实现基于能量和熵的对比损失函数，加入 review_data_logits 样本
+    参数:
+        logits: 模型输出的logits [batch_size, num_classes]
+        review_data_logits: 额外的样本logits [review_batch_size, num_classes]
+        ratio: 用于筛选权重样本的阈值百分比（比例）
+        temperature: 对比损失温度参数
+    """
+    batch_size = logits.size(0)
+    
+    # 1. 计算每个样本的能量和熵
+    energy = -temperature * torch.logsumexp(logits / temperature, dim=1)
+    entropy = _entropy_samples(logits)
+    
+    # 2. 计算样本权重: S_i * log(1 + exp(E_i))
+    weights = entropy * torch.log(1 + torch.exp(energy))
+    
+    # 3. 应用权重阈值筛选样本
+    k = max(1, int(batch_size * ratio))  # 至少选择1个样本
+    _, conf_indices = torch.topk(weights, k, largest=False, sorted=True)
+    
+    # 4. 获取高权重样本的logits和伪标签
+    probs = torch.softmax(logits, dim=1)
+    _, pseudo_labels = torch.max(probs, dim=1)
+    conf_logits = logits[conf_indices]
+    conf_labels = pseudo_labels[conf_indices]
+    k = conf_logits.size(0)  # 实际选中的样本数量
+    
+    # 5. 将 review_data_logits 拼接到 conf_logits 中
+    review_probs = torch.softmax(review_data_logits, dim=1)
+    _, review_labels = torch.max(review_probs, dim=1)
+    extended_logits = torch.cat([conf_logits, review_data_logits], dim=0)
+    extended_labels = torch.cat([conf_labels, review_labels], dim=0)
+    extended_k = extended_logits.size(0)  # 扩展后的样本数量
+    
+    # 6. 计算扩展样本集的余弦相似度矩阵
+    sim_matrix = F.cosine_similarity(
+        extended_logits.unsqueeze(1),  # [extended_k, 1, num_classes]
+        extended_logits.unsqueeze(0),  # [1, extended_k, num_classes]
+        dim=-1
+    )
+    
+    # 7. 创建正负样本掩码
+    # 正样本：相同伪标签且非自身
+    pos_mask = (extended_labels.unsqueeze(0) == extended_labels.unsqueeze(1)) & \
+               (~torch.eye(extended_k, dtype=torch.bool, device=logits.device))
+    
+    # 负样本：不同伪标签
+    neg_mask = extended_labels.unsqueeze(0) != extended_labels.unsqueeze(1)
+    
+    # 8. 计算每个样本的正样本数量
+    pos_counts = pos_mask.sum(dim=1).float()  # [extended_k]
+    valid_samples = pos_counts > 0  # 排除没有正样本的样本
+    
+    # 9. 初始化损失
+    total_loss = torch.tensor(0.0, device=logits.device)
+    valid_count = 0
+    
+    # 10. 遍历每个样本计算损失
+    for i in range(k):  # 仅遍历 conf_logits 的样本
+        if not valid_samples[i]:
+            continue  # 跳过没有正样本的样本
+            
+        # 获取当前样本的正样本索引
+        pos_indices = torch.where(pos_mask[i])[0]
+        
+        # 计算分子：正样本的指数相似度之和
+        numerator = torch.sum(torch.exp(sim_matrix[i, pos_indices] / temperature))
+        
+        # 获取当前样本的负样本索引
+        neg_indices = torch.where(neg_mask[i])[0]
+        
+        # 计算分母：负样本的指数相似度之和
+        denominator = torch.sum(torch.exp(sim_matrix[i, neg_indices] / temperature))
+        
+        # 计算损失项：-log(分子/分母)
+        loss_term = -torch.log(numerator / (denominator + 1e-8))  # 添加小量避免除零
+        
+        # 除以正样本数量（|pos(i)|）
+        loss_term /= pos_counts[i]
+        
+        # 累加损失
+        total_loss += loss_term
+        valid_count += 1
+    
+    # 11. 计算平均损失
+    if valid_count > 0:
+        return total_loss / valid_count
+    else:
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+
+
+def contrastive_loss_samples_selection_review_1(logits, review_data_logits, ratio=0.75, temperature=0.07):
+    """
+    实现基于能量和熵的对比损失函数，加入 review_data_logits 样本
+    参数:
+        logits: 模型输出的logits [batch_size, num_classes]
+        review_data_logits: 额外的样本logits [review_batch_size, num_classes]
+        ratio: 用于筛选权重样本的阈值百分比（比例）
+        temperature: 对比损失温度参数
+    """
+    batch_size = logits.size(0)
+    num_classes = logits.size(1)
+    
+    # 1. 计算每个样本的能量和熵
+    energy = -temperature * torch.logsumexp(logits / temperature, dim=1)
+    entropy = _entropy_samples(logits)
+    
+    # 2. 计算样本权重: S_i * log(1 + exp(E_i))
+    weights = entropy * torch.log(1 + torch.exp(energy))
+    
+    # 3. 应用权重阈值筛选样本
+    k = max(1, int(batch_size * ratio))  # 至少选择1个样本
+    _, conf_indices = torch.topk(weights, k, largest=False, sorted=True)
+    
+    # 4. 获取高权重样本的logits和伪标签
+    probs = torch.softmax(logits, dim=1)
+    _, pseudo_labels = torch.max(probs, dim=1)
+    conf_logits = logits[conf_indices]
+    conf_labels = pseudo_labels[conf_indices]
+    k = conf_logits.size(0)  # 实际选中的样本数量
+    
+    # 5. 计算 review_data_logits 中实际存在的每个类别的平均logits
+    review_probs = torch.softmax(review_data_logits, dim=1)
+    _, review_labels = torch.max(review_probs, dim=1)
+    
+    # 获取review_data中实际存在的唯一类别
+    existing_classes = torch.unique(review_labels)
+    class_avg_logits_list = []
+    class_labels_list = []
+    
+    for class_idx in existing_classes:
+        # 获取当前类别的所有样本
+        class_mask = (review_labels == class_idx)
+        class_logits = review_data_logits[class_mask]
+        
+        # 计算该类别的平均logits（确保有样本）
+        if class_logits.size(0) > 0:
+            avg_logits = class_logits.mean(dim=0, keepdim=True)  # [1, num_classes]
+            class_avg_logits_list.append(avg_logits)
+            class_labels_list.append(class_idx.unsqueeze(0))  # 保持维度一致
+    
+    if class_avg_logits_list:
+        # 拼接所有存在类别的平均logits
+        class_avg_logits = torch.cat(class_avg_logits_list, dim=0)  # [num_existing_classes, num_classes]
+        class_avg_labels = torch.cat(class_labels_list, dim=0)     # [num_existing_classes]
+        
+        # 6. 将类别平均logits拼接到conf_logits中
+        extended_logits = torch.cat([conf_logits, class_avg_logits], dim=0)
+        extended_labels = torch.cat([conf_labels, class_avg_labels], dim=0)
+    else:
+        # 如果没有有效的类别平均logits，只使用conf_logits
+        extended_logits = conf_logits
+        extended_labels = conf_labels
+    
+    extended_k = extended_logits.size(0)  # 扩展后的样本数量
+    
+    # 7. 计算扩展样本集的余弦相似度矩阵[3](@ref)
+    sim_matrix = F.cosine_similarity(
+        extended_logits.unsqueeze(1),  # [extended_k, 1, num_classes]
+        extended_logits.unsqueeze(0),  # [1, extended_k, num_classes]
+        dim=-1
+    )
+    
+    # 8. 创建正负样本掩码[1,5](@ref)
+    # 正样本：相同伪标签且非自身[1](@ref)
+    pos_mask = (extended_labels.unsqueeze(0) == extended_labels.unsqueeze(1)) & \
+               (~torch.eye(extended_k, dtype=torch.bool, device=logits.device))
+    
+    # 负样本：不同伪标签[1](@ref)
+    neg_mask = extended_labels.unsqueeze(0) != extended_labels.unsqueeze(1)
+    
+    # 9. 计算每个样本的正样本数量
+    pos_counts = pos_mask.sum(dim=1).float()  # [extended_k]
+    valid_samples = pos_counts > 0  # 排除没有正样本的样本
+    
+    # 10. 初始化损失
+    total_loss = torch.tensor(0.0, device=logits.device)
+    valid_count = 0
+    
+    # 11. 遍历每个样本计算损失（仅遍历原始conf_logits样本）[3](@ref)
+    for i in range(k):  # 仅遍历 conf_logits 的样本
+        if not valid_samples[i]:
+            continue  # 跳过没有正样本的样本
+            
+        # 获取当前样本的正样本索引
+        pos_indices = torch.where(pos_mask[i])[0]
+        
+        # 计算分子：正样本的指数相似度之和[3](@ref)
+        numerator = torch.sum(torch.exp(sim_matrix[i, pos_indices] / temperature))
+        
+        # 获取当前样本的负样本索引
+        neg_indices = torch.where(neg_mask[i])[0]
+        
+        # 计算分母：负样本的指数相似度之和[3](@ref)
+        denominator = torch.sum(torch.exp(sim_matrix[i, neg_indices] / temperature))
+        
+        # 计算损失项：-log(分子/分母)[3](@ref)
+        loss_term = -torch.log(numerator / (denominator + 1e-8))  # 添加小量避免除零
+        
+        # 除以正样本数量（|pos(i)|）
+        loss_term /= pos_counts[i]
+        
+        # 累加损失
+        total_loss += loss_term
+        valid_count += 1
+    
+    # 12. 计算平均损失
+    if valid_count > 0:
+        return total_loss / valid_count
+    else:
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+
+
+def contrastive_loss_samples_selection_review_2(logits, review_data_logits, ratio=0.75, ratio_review=0.75, temperature=0.07):
+    """
+    实现基于能量和熵的对比损失函数，加入 review_data_logits 样本
+    参数:
+        logits: 模型输出的logits [batch_size, num_classes]
+        review_data_logits: 额外的样本logits [review_batch_size, num_classes]
+        ratio: 用于筛选权重样本的阈值百分比（比例）
+        ratio_review: 用于筛选review数据中每个类别的样本比例
+        temperature: 对比损失温度参数
+    """
+    batch_size = logits.size(0)
+    
+    # 1. 计算每个样本的能量和熵
+    energy = -temperature * torch.logsumexp(logits / temperature, dim=1)
+    entropy = _entropy_samples(logits)
+    
+    # 2. 计算样本权重: S_i * log(1 + exp(E_i))
+    weights = entropy * torch.log(1 + torch.exp(energy))
+    
+    # 3. 应用权重阈值筛选样本
+    k = max(1, int(batch_size * ratio))  # 至少选择1个样本
+    _, conf_indices = torch.topk(weights, k, largest=False, sorted=True)
+    
+    # 4. 获取高权重样本的logits和伪标签
+    probs = torch.softmax(logits, dim=1)
+    _, pseudo_labels = torch.max(probs, dim=1)
+    conf_logits = logits[conf_indices]
+    conf_labels = pseudo_labels[conf_indices]
+    
+    # 5. 对review_data_logits进行同样的权重计算和筛选
+    review_energy = -temperature * torch.logsumexp(review_data_logits / temperature, dim=1)
+    review_entropy = _entropy_samples(review_data_logits)
+    review_weights = review_entropy * torch.log(1 + torch.exp(review_energy))
+    
+    review_probs = torch.softmax(review_data_logits, dim=1)
+    _, review_pseudo_labels = torch.max(review_probs, dim=1)
+    
+    # 6. 对review数据按类别筛选：每个类别选择ratio_review比例的权重最小样本
+    unique_classes = torch.unique(review_pseudo_labels)
+    selected_review_logits = []
+    selected_review_labels = []
+    
+    for cls in unique_classes:
+        # 获取当前类别的样本索引
+        cls_mask = (review_pseudo_labels == cls)
+        cls_indices = torch.where(cls_mask)[0]
+        
+        if len(cls_indices) == 0:
+            continue
+            
+        # 获取当前类别的权重
+        cls_weights = review_weights[cls_indices]
+        
+        # 计算当前类别需要选择的样本数量
+        k_review = max(1, int(len(cls_indices) * ratio_review))
+        
+        # 选择权重最小的k_review个样本（最不确定的样本）
+        _, cls_conf_indices = torch.topk(cls_weights, k_review, largest=False, sorted=True)
+        
+        # 获取选中的样本
+        selected_cls_logits = review_data_logits[cls_indices[cls_conf_indices]]
+        selected_cls_labels = review_pseudo_labels[cls_indices[cls_conf_indices]]
+        
+        selected_review_logits.append(selected_cls_logits)
+        selected_review_labels.append(selected_cls_labels)
+    
+    # 7. 合并选中的review样本
+    if selected_review_logits:
+        selected_review_logits = torch.cat(selected_review_logits, dim=0)
+        selected_review_labels = torch.cat(selected_review_labels, dim=0)
+    else:
+        selected_review_logits = torch.tensor([], device=logits.device)
+        selected_review_labels = torch.tensor([], device=logits.device, dtype=torch.long)
+    
+    # 8. 将conf_logits和筛选后的review_data_logits合并
+    extended_logits = torch.cat([conf_logits, selected_review_logits], dim=0)
+    extended_labels = torch.cat([conf_labels, selected_review_labels], dim=0)
+    extended_k = extended_logits.size(0)  # 扩展后的样本数量
+    
+    if extended_k == 0:
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+    
+    # 9. 计算扩展样本集的余弦相似度矩阵
+    sim_matrix = F.cosine_similarity(
+        extended_logits.unsqueeze(1),  # [extended_k, 1, num_classes]
+        extended_logits.unsqueeze(0),  # [1, extended_k, num_classes]
+        dim=-1
+    )
+    
+    # 10. 创建正负样本掩码
+    # 正样本：相同伪标签且非自身
+    pos_mask = (extended_labels.unsqueeze(0) == extended_labels.unsqueeze(1)) & \
+               (~torch.eye(extended_k, dtype=torch.bool, device=logits.device))
+    
+    # 负样本：不同伪标签
+    neg_mask = extended_labels.unsqueeze(0) != extended_labels.unsqueeze(1)
+    
+    # 11. 计算每个样本的正样本数量
+    pos_counts = pos_mask.sum(dim=1).float()  # [extended_k]
+    valid_samples = pos_counts > 0  # 排除没有正样本的样本
+    
+    # 12. 初始化损失
+    total_loss = torch.tensor(0.0, device=logits.device)
+    valid_count = 0
+    
+    # 13. 遍历每个样本计算损失（仅遍历原始conf_logits的样本）
+    for i in range(conf_logits.size(0)):  # 仅遍历原始conf_logits的样本
+        if i >= extended_k or not valid_samples[i]:
+            continue  # 跳过索引超出或没有正样本的样本
+            
+        # 获取当前样本的正样本索引
+        pos_indices = torch.where(pos_mask[i])[0]
+        
+        # 计算分子：正样本的指数相似度之和
+        numerator = torch.sum(torch.exp(sim_matrix[i, pos_indices] / temperature))
+        
+        # 获取当前样本的负样本索引
+        neg_indices = torch.where(neg_mask[i])[0]
+        
+        # 计算分母：负样本的指数相似度之和
+        denominator = torch.sum(torch.exp(sim_matrix[i, neg_indices] / temperature))
+        
+        # 计算损失项：-log(分子/分母)
+        loss_term = -torch.log(numerator / (denominator + 1e-8))  # 添加小量避免除零
+        
+        # 除以正样本数量（|pos(i)|）
+        loss_term /= pos_counts[i]
+        
+        # 累加损失
+        total_loss += loss_term
+        valid_count += 1
+    
+    # 14. 计算平均损失
+    if valid_count > 0:
+        return total_loss / valid_count
+    else:
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+    
+
+def contrastive_loss_samples_selection_review_2_1(logits, review_data_logits, ratio=0.75, ratio_review=0.75, temperature=0.07):
+    """
+    实现基于能量和熵的对比损失函数，加入 review_data_logits 样本
+    参数:
+        logits: 模型输出的logits [batch_size, num_classes]
+        review_data_logits: 额外的样本logits [review_batch_size, num_classes]
+        ratio: 用于筛选权重样本的阈值百分比（比例）
+        ratio_review: 用于筛选review数据中每个类别的样本比例
+        temperature: 对比损失温度参数
+    """
+    batch_size = logits.size(0)
+    
+    # 1. 计算每个样本的能量和熵
+    energy = -temperature * torch.logsumexp(logits / temperature, dim=1)
+    entropy = _entropy_samples(logits)
+    
+    # 2. 计算样本权重: S_i * log(1 + exp(E_i))
+    weights = entropy * torch.log(1 + torch.exp(energy))
+    
+    # 3. 应用权重阈值筛选样本
+    k = max(1, int(batch_size * ratio))  # 至少选择1个样本
+    _, conf_indices = torch.topk(weights, k, largest=False, sorted=True)
+    
+    # 4. 获取高权重样本的logits和伪标签
+    probs = torch.softmax(logits, dim=1)
+    _, pseudo_labels = torch.max(probs, dim=1)
+    conf_logits = logits[conf_indices]
+    conf_labels = pseudo_labels[conf_indices]
+    
+    # 5. 对review_data_logits进行同样的权重计算和筛选
+    review_energy = -temperature * torch.logsumexp(review_data_logits / temperature, dim=1)
+    review_entropy = _entropy_samples(review_data_logits)
+    review_weights = review_entropy * torch.log(1 + torch.exp(review_energy))
+    
+    review_probs = torch.softmax(review_data_logits, dim=1)
+    _, review_pseudo_labels = torch.max(review_probs, dim=1)
+    
+    # 6. 对review数据按类别筛选：每个类别选择ratio_review比例的权重最小样本
+    unique_classes = torch.unique(review_pseudo_labels)
+    selected_review_logits = []
+    selected_review_labels = []
+    
+    for cls in unique_classes:
+        # 获取当前类别的样本索引
+        cls_mask = (review_pseudo_labels == cls)
+        cls_indices = torch.where(cls_mask)[0]
+        
+        if len(cls_indices) == 0:
+            continue
+            
+        # 获取当前类别的权重
+        cls_weights = review_weights[cls_indices]
+        
+        # 计算当前类别需要选择的样本数量
+        k_review = max(1, int(len(cls_indices) * ratio_review))
+        
+        # 选择权重最小的k_review个样本（最不确定的样本）
+        _, cls_conf_indices = torch.topk(cls_weights, k_review, largest=False, sorted=True)
+        
+        # 获取选中的样本
+        selected_cls_logits = review_data_logits[cls_indices[cls_conf_indices]]
+        selected_cls_labels = review_pseudo_labels[cls_indices[cls_conf_indices]]
+        
+        selected_review_logits.append(selected_cls_logits)
+        selected_review_labels.append(selected_cls_labels)
+    
+    # 7. 合并选中的review样本
+    if selected_review_logits:
+        selected_review_logits = torch.cat(selected_review_logits, dim=0)
+        selected_review_labels = torch.cat(selected_review_labels, dim=0)
+    else:
+        selected_review_logits = torch.tensor([], device=logits.device)
+        selected_review_labels = torch.tensor([], device=logits.device, dtype=torch.long)
+    
+    # 8. 将conf_logits和筛选后的review_data_logits合并
+    extended_logits = torch.cat([conf_logits, selected_review_logits], dim=0)
+    extended_labels = torch.cat([conf_labels, selected_review_labels], dim=0)
+    extended_k = extended_logits.size(0)  # 扩展后的样本数量
+    
+    if extended_k == 0:
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+    
+    # 9. 计算扩展样本集的余弦相似度矩阵
+    sim_matrix = F.cosine_similarity(
+        extended_logits.unsqueeze(1),  # [extended_k, 1, num_classes]
+        extended_logits.unsqueeze(0),  # [1, extended_k, num_classes]
+        dim=-1
+    )
+    
+    # 10. 创建正负样本掩码
+    # 正样本：相同伪标签且非自身
+    pos_mask = (extended_labels.unsqueeze(0) == extended_labels.unsqueeze(1)) & \
+               (~torch.eye(extended_k, dtype=torch.bool, device=logits.device))
+    
+    # 负样本：不同伪标签
+    neg_mask = extended_labels.unsqueeze(0) != extended_labels.unsqueeze(1)
+    
+    # 11. 计算每个样本的正样本数量
+    pos_counts = pos_mask.sum(dim=1).float()  # [extended_k]
+    valid_samples = pos_counts > 0  # 排除没有正样本的样本
+    
+    # 12. 初始化损失
+    total_loss = torch.tensor(0.0, device=logits.device)
+    valid_count = 0
+    
+    # 13. 遍历每个样本计算损失（遍历extended_logits的样本）
+    for i in range(extended_logits.size(0)):  # 遍历extended_logits的样本
+        if i >= extended_k or not valid_samples[i]:
+            continue  # 跳过索引超出或没有正样本的样本
+            
+        # 获取当前样本的正样本索引
+        pos_indices = torch.where(pos_mask[i])[0]
+        
+        # 计算分子：正样本的指数相似度之和
+        numerator = torch.sum(torch.exp(sim_matrix[i, pos_indices] / temperature))
+        
+        # 获取当前样本的负样本索引
+        neg_indices = torch.where(neg_mask[i])[0]
+        
+        # 计算分母：负样本的指数相似度之和
+        denominator = torch.sum(torch.exp(sim_matrix[i, neg_indices] / temperature))
+        
+        # 计算损失项：-log(分子/分母)
+        loss_term = -torch.log(numerator / (denominator + 1e-8))  # 添加小量避免除零
+        
+        # 除以正样本数量（|pos(i)|）
+        loss_term /= pos_counts[i]
+        
+        # 累加损失
+        total_loss += loss_term
+        valid_count += 1
+    
+    # 14. 计算平均损失
+    if valid_count > 0:
+        return total_loss / valid_count
+    else:
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+
 def contrastive_loss_samples_selection_dropout(logits, probs_dropout, ratio=0.75, temperature=0.07):
     """
     实现基于能量和熵的对比损失函数
@@ -1414,6 +1906,427 @@ class CE_KL(nn.Module):
         loss_sum = self.lambda_1 * _entropy(logits) + self.lambda_2 * _kl_loss(logits)
         
         return  loss_sum
+    
+
+
+class CE_KL_review(nn.Module):
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+
+
+    def forward(self, logits, preds_of_data_review, review_data_class):
+        
+        ce_loss = F.cross_entropy(preds_of_data_review, review_data_class, reduction='mean')
+
+        loss_sum = (self.lambda_1 * _entropy(logits) + 
+                   self.lambda_2 * _kl_loss(logits) + 
+                   self.lambda_3 * ce_loss)
+        
+        return  loss_sum
+    
+
+class CE_KL_review_weighted(nn.Module):
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.scale = scale
+
+    def forward(self, logits, preds_of_data_review, review_data_class, review_data_logits):
+        
+        entropy_normalized = _entropy_samples_normalized(review_data_logits)
+        entropy_avg = torch.mean(entropy_normalized)
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+        
+        ce_loss = F.cross_entropy(preds_of_data_review, review_data_class, reduction='mean')
+
+        loss_sum = (self.lambda_1 * _entropy(logits) + 
+                   self.lambda_2 * _kl_loss(logits) + 
+                   self.lambda_3 * weight_* ce_loss)
+        
+        return  loss_sum
+
+class CE_KL_review_weighted_1(nn.Module):
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, confidence_threshold=0.6):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.scale = scale
+        self.confidence_threshold = confidence_threshold  # 置信度阈值
+
+    def forward(self, logits, preds_of_data_review, review_data_class, review_data_logits):
+        
+        entropy_normalized = _entropy_samples_normalized(review_data_logits)
+        entropy_avg = torch.mean(entropy_normalized)
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+        
+        # 计算每个样本的置信度（softmax后的最大概率值）[8](@ref)
+        confidence_scores = torch.softmax(preds_of_data_review, dim=1).max(dim=1)[0]  # shape: [batch_size]
+        
+        # 根据置信度阈值生成样本权重 [8](@ref)
+        sample_weights = (confidence_scores >= self.confidence_threshold).float()  # 高于阈值=1，否则=0
+        
+        # 计算每个样本的CE loss（不进行reduction）[4](@ref)
+        ce_loss_per_sample = F.cross_entropy(preds_of_data_review, review_data_class, reduction='none')  # shape: [batch_size]
+        
+        # 应用样本权重并计算加权平均损失
+        weighted_ce_loss = (ce_loss_per_sample * sample_weights).sum() / (sample_weights.sum() + 1e-8)
+        
+        loss_sum = (self.lambda_1 * _entropy(logits) + 
+                   self.lambda_2 * _kl_loss(logits) + 
+                   self.lambda_3 * weighted_ce_loss)
+        
+        return loss_sum
+
+
+class CE_KL_review_weighted_2(nn.Module):
+
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, confidence_threshold=0.6, num_classes=4):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.scale = scale
+        self.confidence_threshold = confidence_threshold  # 置信度阈值
+        self.num_classes = num_classes
+
+    def forward(self, logits, preds_of_data_review, review_data_class, review_data_logits):
+        # 计算每个类别的频率（基于当前batch）
+        class_counts = torch.bincount(review_data_class, minlength=self.num_classes)
+        
+        # 计算每个样本的权重：基于其类别的出现频率
+        epsilon = 1e-6  # 小常数防止除零
+        
+        # 为每个样本创建权重：权重 = 1 / 该类别的出现次数
+        sample_weights = 1.0 / (class_counts[review_data_class].float() + epsilon)
+        
+        # 可选：对权重进行归一化，使得权重和为1
+        sample_weights = sample_weights / sample_weights.sum()
+        
+        # 计算不带权重的CE loss（使用reduction='none'得到每个样本的损失）
+        ce_loss_per_sample = F.cross_entropy(
+            preds_of_data_review, 
+            review_data_class, 
+            reduction='none'
+        )
+        
+        # 手动应用样本权重
+        weighted_ce_loss = (ce_loss_per_sample * sample_weights).sum()
+        
+        # 进一步计算当前样本的权重
+        entropy_normalized = _entropy_samples_normalized(logits.detach().clone())
+        entropy_avg = torch.mean(entropy_normalized)
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+
+        # 这里假设 _entropy 和 _kl_loss 是您定义的其他损失函数
+        loss_sum = (self.lambda_1 * _entropy(logits) + 
+                   self.lambda_2 * _kl_loss(logits) + 
+                   self.lambda_3 * weight_ * weighted_ce_loss)
+        
+        return loss_sum
+    
+
+class CE_KL_review_weighted_3(nn.Module):
+
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, confidence_threshold=0.6, num_classes=4, entropy_threshold=0.5):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.scale = scale
+        self.confidence_threshold = confidence_threshold  # 置信度阈值
+        self.num_classes = num_classes
+        self.entropy_threshold = entropy_threshold
+
+    def forward(self, logits, preds_of_data_review, review_data_class, review_data_logits):
+        # 计算每个类别的频率（基于当前batch）
+        if not review_data_logits.shape[0] == 0:
+            class_counts = torch.bincount(review_data_class, minlength=self.num_classes)
+            
+            # 计算每个样本的权重：基于其类别的出现频率
+            epsilon = 1e-6  # 小常数防止除零
+            
+            # 为每个样本创建权重：权重 = 1 / 该类别的出现次数
+            sample_weights = 1.0 / (class_counts[review_data_class].float() + epsilon)
+            
+            # 可选：对权重进行归一化，使得权重和为1
+            sample_weights = sample_weights / sample_weights.sum()
+            
+            # 计算不带权重的CE loss（使用reduction='none'得到每个样本的损失）
+            ce_loss_per_sample = F.cross_entropy(
+                preds_of_data_review, 
+                review_data_class, 
+                reduction='none'
+            )
+            
+            # 手动应用样本权重
+            weighted_ce_loss = (ce_loss_per_sample * sample_weights).sum()
+            
+            # 进一步计算当前样本的权重
+            entropy_normalized = _entropy_samples_normalized(logits.detach().clone())
+            entropy_avg = torch.mean(entropy_normalized)
+            # transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+            # weight_ = torch.sigmoid(-transformed_input / self.temp)
+            weight_ = 1.0 if entropy_avg < self.entropy_threshold else 0.0
+        else:
+            weighted_ce_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
+            weight_ = torch.tensor(0.0, device=logits.device, requires_grad=True)
+
+        # 这里假设 _entropy 和 _kl_loss 是您定义的其他损失函数
+        loss_sum = (self.lambda_1 * _entropy(logits) + 
+                   self.lambda_2 * _kl_loss(logits) + 
+                   self.lambda_3 * weight_ * weighted_ce_loss)
+        
+        return loss_sum
+    
+class CE_KL_review_weighted_3_1(nn.Module):
+
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, confidence_threshold=0.6, num_classes=4, entropy_threshold=0.5):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.scale = scale
+        self.confidence_threshold = confidence_threshold  # 置信度阈值
+        self.num_classes = num_classes
+        self.entropy_threshold = entropy_threshold
+
+    def forward(self, logits, preds_of_data_review, review_data_class, review_data_logits):
+        # 计算每个类别的频率（基于当前batch）
+        class_counts = torch.bincount(review_data_class, minlength=self.num_classes)
+        
+        # 计算每个样本的权重：基于其类别的出现频率
+        epsilon = 1e-6  # 小常数防止除零
+        
+        # 为每个样本创建权重：权重 = 1 / 该类别的出现次数
+        sample_weights = 1.0 / (class_counts[review_data_class].float() + epsilon)
+        
+        # 可选：对权重进行归一化，使得权重和为1
+        sample_weights = sample_weights / sample_weights.sum()
+        
+        # 计算不带权重的CE loss（使用reduction='none'得到每个样本的损失）
+        ce_loss_per_sample = F.cross_entropy(
+            preds_of_data_review, 
+            review_data_class, 
+            reduction='none'
+        )
+        
+        # 手动应用样本权重
+        weighted_ce_loss = (ce_loss_per_sample * sample_weights).sum()
+        
+        # 进一步计算当前样本的权重
+        entropy_normalized = _entropy_samples_normalized(logits.detach().clone())
+        entropy_avg = torch.mean(entropy_normalized)
+        weight_ = 1.0 if entropy_avg < self.entropy_threshold else 0.0
+
+        # 计算能量（不进行梯度反向传播）
+        energy_logits = -self.temp * torch.logsumexp(logits / self.temp, dim=1)
+        energy_review_data_logits = -self.temp * torch.logsumexp(review_data_logits / self.temp, dim=1)
+        
+        # 计算能量差异和对齐损失
+        energy_diff = energy_logits.detach().mean() - energy_review_data_logits.detach().mean()
+        energy_align_loss = self.softplus(torch.abs(energy_diff))
+        weight_1 = energy_align_loss
+
+        # 这里假设 _entropy 和 _kl_loss 是您定义的其他损失函数
+        loss_sum = (self.lambda_1 * _entropy(logits) + 
+                   self.lambda_2 * _kl_loss(logits) + 
+                   self.lambda_3 * weight_ * weight_1 * weighted_ce_loss)
+        
+        return loss_sum
+
+class CE_KL_review_weighted_3_2(nn.Module):
+
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, confidence_threshold=0.6, num_classes=4, entropy_threshold=0.5, distill_temp=2.0):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.distill_temp = distill_temp  # 蒸馏温度参数[1,2](@ref)
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.scale = scale
+        self.confidence_threshold = confidence_threshold  # 置信度阈值
+        self.num_classes = num_classes
+        self.entropy_threshold = entropy_threshold
+
+    def forward(self, logits, preds_of_data_review, review_data_class, review_data_logits):
+        # 计算每个类别的频率（基于当前batch）
+        class_counts = torch.bincount(review_data_class, minlength=self.num_classes)
+        
+        # 计算每个样本的权重：基于其类别的出现频率
+        epsilon = 1e-6  # 小常数防止除零
+        
+        # 为每个样本创建权重：权重 = 1 / 该类别的出现次数
+        sample_weights = 1.0 / (class_counts[review_data_class].float() + epsilon)
+        
+        # 可选：对权重进行归一化，使得权重和为1
+        sample_weights = sample_weights / sample_weights.sum()
+        
+        # 使用蒸馏损失替代交叉熵损失[1,2](@ref)
+        # 计算每个样本的蒸馏损失（使用reduction='none'得到每个样本的损失）
+        distill_loss_per_sample = self.distillation_loss_per_sample(
+            preds_of_data_review,  # 学生模型输出
+            review_data_logits,    # 教师模型输出（无梯度）
+            reduction='none'
+        )
+        
+        # 手动应用样本权重到蒸馏损失
+        weighted_distill_loss = (distill_loss_per_sample * sample_weights).sum()
+        
+        # 进一步计算当前样本的权重
+        entropy_normalized = _entropy_samples_normalized(logits.detach().clone())
+        entropy_avg = torch.mean(entropy_normalized)
+        weight_ = 1.0 if entropy_avg < self.entropy_threshold else 0.0
+
+        # 组合总损失
+        loss_sum = (self.lambda_1 * _entropy(logits) + 
+                   self.lambda_2 * _kl_loss(logits) + 
+                   self.lambda_3 * weight_ * weighted_distill_loss)
+        
+        return loss_sum
+
+    def distillation_loss_per_sample(self, student_logits, teacher_logits, reduction='none'):
+        """
+        计算每个样本的蒸馏损失（基于KL散度）
+        """
+        # 应用温度缩放
+        student_probs = F.log_softmax(student_logits / self.distill_temp, dim=1)  # 注意这里使用log_softmax
+        teacher_probs = F.softmax(teacher_logits / self.distill_temp, dim=1)
+        
+        # 计算KL散度，此时kl_loss的形状是(batch_size, n_class)
+        kl_loss_matrix = F.kl_div(student_probs, teacher_probs, reduction='none')
+        
+        # 关键步骤：在类别维度上求和，得到每个样本的总损失，形状变为(batch_size,)
+        distill_loss_per_sample = kl_loss_matrix.sum(dim=1)
+        
+        # 乘以温度平方以保持梯度幅度稳定
+        distill_loss_per_sample = distill_loss_per_sample * (self.distill_temp ** 2)
+        
+        return distill_loss_per_sample
+    
+class CE_KL_review_weighted_4(nn.Module):
+
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, confidence_threshold=0.6, num_classes=4, entropy_threshold=0.5):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.scale = scale
+        self.confidence_threshold = confidence_threshold  # 置信度阈值
+        self.num_classes = num_classes
+        self.entropy_threshold = entropy_threshold
+
+    def forward(self, logits, preds_of_data_review, review_data_class, review_data_logits):
+        # 计算每个类别的频率（基于当前batch）
+        class_counts = torch.bincount(review_data_class, minlength=self.num_classes)
+        
+        # 计算每个样本的权重：基于其类别的出现频率
+        epsilon = 1e-6  # 小常数防止除零
+        
+        # 为每个样本创建权重：权重 = 1 / 该类别的出现次数
+        sample_weights = 1.0 / (class_counts[review_data_class].float() + epsilon)
+        
+        # 可选：对权重进行归一化，使得权重和为1
+        sample_weights = sample_weights / sample_weights.sum()
+        
+        # 计算不带权重的CE loss（使用reduction='none'得到每个样本的损失）
+        ce_loss_per_sample = F.cross_entropy(
+            preds_of_data_review, 
+            review_data_class, 
+            reduction='none'
+        )
+        
+        # 手动应用样本权重
+        weighted_ce_loss = (ce_loss_per_sample * sample_weights).sum()
+        
+        # 进一步计算当前样本的权重
+        entropy_normalized = _entropy_samples_normalized(logits.detach().clone())
+        entropy_avg = torch.mean(entropy_normalized)
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+        weight_ce = weight_ if entropy_avg < self.entropy_threshold else 0.0
+
+        # 这里假设 _entropy 和 _kl_loss 是您定义的其他损失函数
+        loss_sum = (self.lambda_1 * _entropy(logits) + 
+                   self.lambda_2 * _kl_loss(logits) + 
+                   self.lambda_3 * weight_ce * weighted_ce_loss)
+        
+        return loss_sum
+    
+class CE_KL_review_weighted_5(nn.Module):
+
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, confidence_threshold=0.6, num_classes=4, entropy_threshold=0.5):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.scale = scale
+        self.confidence_threshold = confidence_threshold  # 置信度阈值
+        self.num_classes = num_classes
+        self.entropy_threshold = entropy_threshold
+
+    def forward(self, logits, preds_of_data_review, review_data_class, review_data_logits):
+        # 计算每个类别的频率（基于当前batch）
+        class_counts = torch.bincount(review_data_class, minlength=self.num_classes)
+        
+        # 计算每个样本的权重：基于其类别的出现频率
+        epsilon = 1e-6  # 小常数防止除零
+        
+        # 为每个样本创建权重：权重 = 1 / 该类别的出现次数
+        sample_weights = 1.0 / (class_counts[review_data_class].float() + epsilon)
+        
+        # 可选：对权重进行归一化，使得权重和为1
+        sample_weights = sample_weights / sample_weights.sum()
+        
+        # 计算不带权重的CE loss（使用reduction='none'得到每个样本的损失）
+        ce_loss_per_sample = F.cross_entropy(
+            preds_of_data_review, 
+            review_data_class, 
+            reduction='none'
+        )
+        
+        # 手动应用样本权重
+        weighted_ce_loss = (ce_loss_per_sample * sample_weights).sum()
+        
+        # 进一步计算当前样本的权重
+        entropy_normalized = _entropy_samples_normalized(logits.detach().clone())
+        entropy_avg = torch.mean(entropy_normalized)
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+        weight_ce = 1.0 if entropy_avg < self.entropy_threshold else 0.0
+
+        # 这里假设 _entropy 和 _kl_loss 是您定义的其他损失函数
+        loss_sum = weight_ * (self.lambda_1 * _entropy(logits) + 
+                   self.lambda_2 * _kl_loss(logits) + 
+                   self.lambda_3 * weight_ce * weighted_ce_loss)
+        
+        return loss_sum
 
 class CaliE_MDR(nn.Module):
     def __init__(self, lambda_1=1.0, lambda_2=1.0, temp=1.0):
@@ -2287,7 +3200,319 @@ class ConsSamples_selection_two_stage_weighted_4_1_double_1(nn.Module):
         loss_sum = self.lambda_3 * weight_ * (self.lambda_1 * cons_loss + self.lambda_2 * cons_loss_1)
         
         return  loss_sum
+    
 
+class ConsSamples_selection_two_stage_weighted_4_1_double_review(nn.Module):
+    # special version for two stage model updating
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+        self.scale = scale
+
+    def forward(self, logits, logits_initial, feas, prototypes):
+        
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+        
+        cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+
+        cons_loss_1 = contrastive_prototype_loss(logits, feas, prototypes, ratio=self.ratio, temperature=self.temp)
+
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+        
+        # 通过 Sigmoid 约束输出到 [0,1]
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+        loss_sum = self.lambda_3 * weight_ * (self.lambda_1 * cons_loss + self.lambda_2 * cons_loss_1)
+        
+        return  loss_sum
+
+
+class ConsSamples_selection_two_stage_weighted_4_1_review(nn.Module):
+    # special version for two stage model updating
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, entropy_threshold=0.5):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+        self.scale = scale
+        self.entropy_threshold = entropy_threshold  # Threshold for entropy_avg
+
+    def forward(self, logits, logits_initial, review_data_logits):
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+
+        # Determine weight_ce based on entropy_avg
+        weight_ce = 1.0 if entropy_avg < self.entropy_threshold else 0.0
+
+        # Combine logits based on weight_ce
+        if weight_ce == 1.0:
+            combined_logits = torch.cat([logits, review_data_logits], dim=0)
+        else:
+            combined_logits = logits
+
+        # Compute contrastive loss
+        cons_loss = contrastive_loss_samples_selection_review(combined_logits, ratio=self.ratio, temperature=self.temp)
+
+        # Transform input for weight calculation
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+
+        # Constrain output to [0,1] using Sigmoid
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+        # Compute final loss
+        loss_sum = self.lambda_3 * weight_ * cons_loss
+
+        return loss_sum
+
+class ConsSamples_selection_two_stage_weighted_4_1_review_1(nn.Module):
+    # special version for two stage model updating
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, entropy_threshold=0.5):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+        self.scale = scale
+        self.entropy_threshold = entropy_threshold  # Threshold for entropy_avg
+
+    def forward(self, logits, logits_initial, review_data_logits):
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+
+        # Determine weight_ce based on entropy_avg
+        weight_ce = 1.0 if entropy_avg < self.entropy_threshold else 0.0
+
+        # Combine logits based on weight_ce
+        if weight_ce == 1.0:
+            # Compute contrastive loss
+            cons_loss = contrastive_loss_samples_selection_review(logits, review_data_logits, ratio=self.ratio, temperature=self.temp)
+        else:
+            cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+        
+        # Transform input for weight calculation
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+
+        # Constrain output to [0,1] using Sigmoid
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+        # Compute final loss
+        loss_sum = self.lambda_3 * weight_ * cons_loss
+
+        return loss_sum
+
+
+class ConsSamples_selection_two_stage_weighted_4_1_review_2(nn.Module):
+    # special version for two stage model updating
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, entropy_threshold=0.5):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+        self.scale = scale
+        self.entropy_threshold = entropy_threshold  # Threshold for entropy_avg
+
+    def forward(self, logits, logits_initial, review_data_logits):
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+
+        # Determine weight_ce based on entropy_avg
+        weight_ce = 1.0 if entropy_avg < self.entropy_threshold else 0.0
+
+        # Combine logits based on weight_ce
+        if weight_ce == 1.0:
+            # Compute contrastive loss
+            cons_loss = contrastive_loss_samples_selection_review(logits, review_data_logits, ratio=self.ratio, temperature=self.temp)
+        else:
+            cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+        
+        # Transform input for weight calculation
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+
+        # Constrain output to [0,1] using Sigmoid
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+        # Compute final loss
+        loss_sum = self.lambda_3 * weight_ * cons_loss
+
+        return loss_sum
+
+
+class ConsSamples_selection_two_stage_weighted_4_1_review_2_1(nn.Module):
+    # special version for two stage model updating
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, entropy_threshold=0.5):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+        self.scale = scale
+        self.entropy_threshold = entropy_threshold  # Threshold for entropy_avg
+
+    def forward(self, logits, logits_initial, review_data_logits):
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+
+        # Determine weight_ce based on entropy_avg
+        weight_ce = 1.0 if entropy_avg < self.entropy_threshold else 0.0
+
+        # Combine logits based on weight_ce
+        if weight_ce == 1.0:
+            # Compute contrastive loss
+            cons_loss = contrastive_loss_samples_selection_review(logits, review_data_logits, ratio=self.ratio, temperature=self.temp)
+        else:
+            cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+        
+        # Transform input for weight calculation
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+
+        # Constrain output to [0,1] using Sigmoid
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+        # Compute final loss
+        loss_sum = self.lambda_3 * weight_ * cons_loss
+
+        return loss_sum
+
+class ConsSamples_selection_two_stage_weighted_4_1_review_3(nn.Module):
+    # special version for two stage model updating
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, entropy_threshold=0.5):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+        self.scale = scale
+        self.entropy_threshold = entropy_threshold  # Threshold for entropy_avg
+
+    def forward(self, logits, logits_initial, review_data_logits):
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+
+        # Determine weight_ce based on entropy_avg
+        weight_ce = 1.0 if entropy_avg < self.entropy_threshold else 0.0
+
+        # Combine logits based on weight_ce
+        if weight_ce == 1.0:
+            # Compute contrastive loss
+            cons_loss = contrastive_loss_samples_selection_review_1(logits, review_data_logits, ratio=self.ratio, temperature=self.temp)
+        else:
+            cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+        
+        # Transform input for weight calculation
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+
+        # Constrain output to [0,1] using Sigmoid
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+        # Compute final loss
+        loss_sum = self.lambda_3 * weight_ * cons_loss
+
+        return loss_sum
+
+class ConsSamples_selection_two_stage_weighted_4_1_review_4(nn.Module):
+    # special version for two stage model updating
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, entropy_threshold=0.5):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+        self.scale = scale
+        self.entropy_threshold = entropy_threshold  # Threshold for entropy_avg
+
+    def forward(self, logits, logits_initial, review_data_logits):
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+
+        # Determine weight_ce based on entropy_avg
+        weight_ce = 1.0 if entropy_avg < self.entropy_threshold else 0.0
+
+        # Combine logits based on weight_ce
+        if weight_ce == 1.0:
+            # Compute contrastive loss
+            cons_loss = contrastive_loss_samples_selection_review_2(logits, review_data_logits, ratio=self.ratio, ratio_review=0.25, temperature=self.temp)
+        else:
+            cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+        
+        # Transform input for weight calculation
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+
+        # Constrain output to [0,1] using Sigmoid
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+        # Compute final loss
+        loss_sum = self.lambda_3 * weight_ * cons_loss
+
+        return loss_sum
+
+class ConsSamples_selection_two_stage_weighted_4_1_review_4_1(nn.Module):
+    # special version for two stage model updating
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, entropy_threshold=0.5):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+        self.scale = scale
+        self.entropy_threshold = entropy_threshold  # Threshold for entropy_avg
+
+    def forward(self, logits, logits_initial, review_data_logits):
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+
+        # Determine weight_ce based on entropy_avg
+        weight_ce = 1.0 if entropy_avg < self.entropy_threshold else 0.0
+
+        # Combine logits based on weight_ce
+        if weight_ce == 1.0:
+            # Compute contrastive loss
+            if not review_data_logits.shape[0] == 0:
+                cons_loss = contrastive_loss_samples_selection_review_2_1(logits, review_data_logits, ratio=self.ratio, ratio_review=0.25, temperature=self.temp)
+            else:
+                cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+        else:
+            cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+        
+        # Transform input for weight calculation
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+
+        # Constrain output to [0,1] using Sigmoid
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+        # Compute final loss
+        loss_sum = self.lambda_3 * weight_ * cons_loss
+
+        return loss_sum
 
 class ConsSamples_selection_1(nn.Module):
     def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0):
