@@ -645,7 +645,7 @@ class proposed_TTA(nn.Module):
                         elif self.return_type == 'y':
                             preds_of_data = self.model(sup_data)
                         
-                        if self.memory.get_occupancy() >= int(self.capacity/2):
+                        if self.memory.get_occupancy() >= self.num_classes*self.batch_size_online:
 
                             if self.losses[0].strip() in ["CE_KL_review"]: 
                                 loss = loss_fn(preds_of_data, preds_of_data_review, review_data_class)
@@ -675,7 +675,7 @@ class proposed_TTA(nn.Module):
                         elif self.return_type == 'y':
                             preds_of_data_1 = self.model(sup_data)
                         
-                        if self.memory.get_occupancy() >= int(self.capacity/2):
+                        if self.memory.get_occupancy() >= self.num_classes*self.batch_size_online:
                             if self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted","ConsSamples_selection_two_stage_weighted_1","ConsSamples_selection_two_stage_weighted_2","ConsSamples_selection_two_stage_weighted_3","ConsSamples_selection_two_stage_weighted_4","ConsSamples_selection_two_stage_weighted_4_1"]: 
                                 loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach())
                             elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_double"]:
