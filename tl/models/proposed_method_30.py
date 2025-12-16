@@ -15,7 +15,7 @@ from easydict import EasyDict as edict
 
 # from robustbench.model_zoo.architectures.utils_architectures import normalize_model, ImageNormalizer
 from tl.utils.memory_proposed_2 import DropMemoryBank, DropMemoryBank_review, DropMemoryBank_review_1, OnlineBuffer, OnlineBufferInstance
-from tl.utils.memory_proposed_3 import DropMemoryBank_review_2, DropMemoryBank_review_3
+from tl.utils.memory_proposed_3 import DropMemoryBank_review_2, DropMemoryBank_review_3, DropMemoryBank_review_4, DropMemoryBank_review_5, DropMemoryBank_review_6, DropMemoryBank_review_7
 from tl.utils.loss_proposed_1 import MemorySoftplusEnergyAlignment, CE_MDR, PresudoLabelMemorySoftplusEnergyAlignment, MemorySoftplusEnergyWeightedAlignment, \
     MemorySoftplusEnergyRatioSortedAlignment, MemorySoftplusEnergyFeatureWeightedAlignment, MemorySoftplusEnergyWeightedAlignmentMDR, \
         CaliE_MDR, CaliE_UKL, CE_KL, CaliE_KL, EnergyEntropy_selected, EnergyEntropy_selected_all, EnergyEntropy_selected_align, PresudoLabelEMA, PresudoLabelEMA_selection, \
@@ -96,6 +96,18 @@ class proposed_TTA(nn.Module):
                                      category_uniform)
         elif self.memory_type in ['DropMemoryBank_review_3']:
             self.memory = DropMemoryBank_review_3(capacity, num_classes, confidence_threshold, uncertainty_threshold,
+                                     category_uniform)
+        elif self.memory_type in ['DropMemoryBank_review_4']:
+            self.memory = DropMemoryBank_review_4(capacity, num_classes, confidence_threshold, uncertainty_threshold,
+                                     category_uniform)
+        elif self.memory_type in ['DropMemoryBank_review_5']:
+            self.memory = DropMemoryBank_review_5(capacity, num_classes, confidence_threshold, uncertainty_threshold,
+                                     category_uniform)
+        elif self.memory_type in ['DropMemoryBank_review_6']:
+            self.memory = DropMemoryBank_review_6(capacity, num_classes, confidence_threshold, uncertainty_threshold,
+                                     category_uniform)
+        elif self.memory_type in ['DropMemoryBank_review_7']:
+            self.memory = DropMemoryBank_review_7(capacity, num_classes, confidence_threshold, uncertainty_threshold,
                                      category_uniform)
         
         self.memory_copy = deepcopy(self.memory)
@@ -290,7 +302,7 @@ class proposed_TTA(nn.Module):
                     conf = pseudo_conf[i].item()
                     uncertainty = weights[i].item()
                     current_instance = edict(data=data, prediction=p_l, uncertainty=uncertainty,
-                                            logit=out[i].detach().clone(), confidence=conf)  # instance includes the feature, pesudo label, weights, and probability
+                                            logit=out[i].detach().clone(), confidence=conf, time_stamp=self.num_instance)  # instance includes the feature, pesudo label, weights, and probability
                     self.online_buffer.add_instance(current_instance) # add to the memory bank
 
                     # save the instances in the memory based on confidence threshold
