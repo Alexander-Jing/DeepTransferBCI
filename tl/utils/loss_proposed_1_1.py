@@ -540,6 +540,234 @@ class CE_KL_review_weighted_6(nn.Module):
         return loss_sum
 
 
+class CE_KL_review_weighted_7(nn.Module):
+
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, confidence_threshold=0.6, num_classes=4, entropy_threshold=0.5, ratio=0.75, weight_type='entropy'):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.scale = scale
+        self.confidence_threshold = confidence_threshold  # 置信度阈值
+        self.num_classes = num_classes
+        self.entropy_threshold = entropy_threshold
+        self.ratio = ratio
+        self.weight_type = weight_type
+
+    def forward(self, logits, preds_of_data_review, review_data_class, review_data_logits):
+        
+        # 判断memory_bank是否为空
+        if not review_data_logits.shape[0] == 0:
+            
+            # 进一步计算当前样本的权重
+            entropy_normalized = _entropy_samples_normalized(logits.detach().clone())
+            entropy_avg = torch.mean(entropy_normalized)
+            
+            # 判断当前的 entropy_avg 是否小于阈值
+            if entropy_avg < self.entropy_threshold:
+                # 小于阈值，使用当前的mini-batch的数据和过往的memory_bank数据计算损失函数
+                class_counts = torch.bincount(review_data_class, minlength=self.num_classes)
+                # 计算每个样本的权重：基于其类别的出现频率
+                epsilon = 1e-6  # 小常数防止除零
+                
+                # 为每个样本创建权重：权重 = 1 / 该类别的出现次数
+                sample_weights = 1.0 / (class_counts[review_data_class].float() + epsilon)
+                
+                # 可选：对权重进行归一化，使得权重和为1
+                sample_weights = sample_weights / sample_weights.sum()
+                
+                # 计算不带权重的CE loss（使用reduction='none'得到每个样本的损失）
+                ce_loss_per_sample = F.cross_entropy(
+                    preds_of_data_review, 
+                    review_data_class, 
+                    reduction='none'
+                )
+                
+                # 手动应用样本权重
+                weighted_ce_loss = (ce_loss_per_sample * sample_weights).sum()
+                loss_sum = (self.lambda_1 * _entropy(logits) + 
+                   self.lambda_2 * _kl_loss(logits) + 
+                   self.lambda_3 * weighted_ce_loss)
+            else:
+                # 如果大于阈值，则使用当前mini-batch的数据计算损失函数
+                # 选择熵较低的样本
+                if self.weight_type == 'entropy':
+                    entropy = _entropy_samples(logits)
+                    weights = entropy
+                else:
+                    raise ValueError(f"Unsupported weight_type: {self.weight_type}")
+                k = max(1, int(logits.size(0) * self.ratio))  # 至少选择1个样本
+                _, conf_indices = torch.topk(weights, k, largest=False, sorted=True)
+                # 低熵样本的logits用于计算损失
+                conf_logits = logits[conf_indices]
+                loss_sum = (self.lambda_1 * _entropy(conf_logits) + 
+                   self.lambda_2 * _kl_loss(conf_logits))        
+        # 空的话直接使用当前mini-batch的数据计算损失函数（一般情况下不会使用到）    
+        else:
+            loss_sum = (self.lambda_1 * _entropy(logits) + 
+                    self.lambda_2 * _kl_loss(logits))
+        
+        return loss_sum
+
+
+class CE_KL_review_weighted_8(nn.Module):
+
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, confidence_threshold=0.6, num_classes=4, entropy_threshold=0.5, ratio=0.75, weight_type='entropy', thre_alpha=1.0):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.scale = scale
+        self.confidence_threshold = confidence_threshold  # 置信度阈值
+        self.num_classes = num_classes
+        self.entropy_threshold = entropy_threshold
+        self.ratio = ratio
+        self.weight_type = weight_type
+        self.thre_alpha = thre_alpha
+
+    def forward(self, logits, preds_of_data_review, review_data_class, review_data_logits, current_threshold):
+        
+        # 归一化当前的阈值
+        C = logits.size(1)  # categories
+        C_tensor = torch.tensor(C, dtype=torch.float, device=logits.device)
+        max_entropy = torch.log(C_tensor)
+        current_threshold = self.thre_alpha * current_threshold / max_entropy
+
+        # 判断memory_bank是否为空
+        if not review_data_logits.shape[0] == 0:
+            
+            # 进一步计算当前样本的权重
+            entropy_normalized = _entropy_samples_normalized(logits.detach().clone())
+            entropy_avg = torch.mean(entropy_normalized)
+            
+            # 判断当前的 entropy_avg 是否小于阈值current_threshold
+            if entropy_avg < current_threshold:
+                # 小于阈值，使用当前的mini-batch的数据和过往的memory_bank数据计算损失函数
+                class_counts = torch.bincount(review_data_class, minlength=self.num_classes)
+                # 计算每个样本的权重：基于其类别的出现频率
+                epsilon = 1e-6  # 小常数防止除零
+                
+                # 为每个样本创建权重：权重 = 1 / 该类别的出现次数
+                sample_weights = 1.0 / (class_counts[review_data_class].float() + epsilon)
+                
+                # 可选：对权重进行归一化，使得权重和为1
+                sample_weights = sample_weights / sample_weights.sum()
+                
+                # 计算不带权重的CE loss（使用reduction='none'得到每个样本的损失）
+                ce_loss_per_sample = F.cross_entropy(
+                    preds_of_data_review, 
+                    review_data_class, 
+                    reduction='none'
+                )
+                
+                # 手动应用样本权重
+                weighted_ce_loss = (ce_loss_per_sample * sample_weights).sum()
+                loss_sum = (self.lambda_1 * _entropy(logits) + 
+                   self.lambda_2 * _kl_loss(logits) + 
+                   self.lambda_3 * weighted_ce_loss)
+            else:
+                # 如果大于阈值，则使用当前mini-batch的数据计算损失函数
+                # 选择熵较低的样本
+                if self.weight_type == 'entropy':
+                    entropy = _entropy_samples(logits)
+                    weights = entropy
+                else:
+                    raise ValueError(f"Unsupported weight_type: {self.weight_type}")
+                k = max(1, int(logits.size(0) * self.ratio))  # 至少选择1个样本
+                _, conf_indices = torch.topk(weights, k, largest=False, sorted=True)
+                # 低熵样本的logits用于计算损失
+                conf_logits = logits[conf_indices]
+                loss_sum = (self.lambda_1 * _entropy(conf_logits) + 
+                   self.lambda_2 * _kl_loss(conf_logits))        
+        # 空的话直接使用当前mini-batch的数据计算损失函数（一般情况下不会使用到）    
+        else:
+            loss_sum = (self.lambda_1 * _entropy(logits) + 
+                    self.lambda_2 * _kl_loss(logits))
+        
+        return loss_sum
+    
+
+class CE_KL_review_weighted_9(nn.Module):
+
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, confidence_threshold=0.6, num_classes=4, entropy_threshold=0.5, ratio=0.75, weight_type='entropy', thre_alpha=1.0):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.scale = scale
+        self.confidence_threshold = confidence_threshold  # 置信度阈值
+        self.num_classes = num_classes
+        self.entropy_threshold = entropy_threshold
+        self.ratio = ratio
+        self.weight_type = weight_type
+        self.thre_alpha = thre_alpha
+
+    def forward(self, logits, preds_of_data_review, review_data_class, review_data_logits, current_threshold, current_threshold_std):
+        
+        # 归一化当前的阈值
+        C = logits.size(1)  # categories
+        C_tensor = torch.tensor(C, dtype=torch.float, device=logits.device)
+        max_entropy = torch.log(C_tensor)
+        _threshold = current_threshold / max_entropy + self.thre_alpha * current_threshold_std / max_entropy
+
+        # 判断memory_bank是否为空
+        if not review_data_logits.shape[0] == 0:
+            
+            # 进一步计算当前样本的权重
+            entropy_normalized = _entropy_samples_normalized(logits.detach().clone())
+            entropy_avg = torch.mean(entropy_normalized)
+            
+            # 判断当前的 entropy_avg 是否小于阈值_threshold
+            if entropy_avg < _threshold:
+                # 小于阈值，使用当前的mini-batch的数据和过往的memory_bank数据计算损失函数
+                class_counts = torch.bincount(review_data_class, minlength=self.num_classes)
+                # 计算每个样本的权重：基于其类别的出现频率
+                epsilon = 1e-6  # 小常数防止除零
+                
+                # 为每个样本创建权重：权重 = 1 / 该类别的出现次数
+                sample_weights = 1.0 / (class_counts[review_data_class].float() + epsilon)
+                
+                # 可选：对权重进行归一化，使得权重和为1
+                sample_weights = sample_weights / sample_weights.sum()
+                
+                # 计算不带权重的CE loss（使用reduction='none'得到每个样本的损失）
+                ce_loss_per_sample = F.cross_entropy(
+                    preds_of_data_review, 
+                    review_data_class, 
+                    reduction='none'
+                )
+                
+                # 手动应用样本权重
+                weighted_ce_loss = (ce_loss_per_sample * sample_weights).sum()
+                loss_sum = (self.lambda_1 * _entropy(logits) + 
+                   self.lambda_2 * _kl_loss(logits) + 
+                   self.lambda_3 * weighted_ce_loss)
+            else:
+                # 如果大于阈值，则使用当前mini-batch的数据计算损失函数
+                # 选择熵较低的样本
+                if self.weight_type == 'entropy':
+                    entropy = _entropy_samples(logits)
+                    weights = entropy
+                else:
+                    raise ValueError(f"Unsupported weight_type: {self.weight_type}")
+                k = max(1, int(logits.size(0) * self.ratio))  # 至少选择1个样本
+                _, conf_indices = torch.topk(weights, k, largest=False, sorted=True)
+                # 低熵样本的logits用于计算损失
+                conf_logits = logits[conf_indices]
+                loss_sum = (self.lambda_1 * _entropy(conf_logits) + 
+                   self.lambda_2 * _kl_loss(conf_logits))        
+        # 空的话直接使用当前mini-batch的数据计算损失函数（一般情况下不会使用到）    
+        else:
+            loss_sum = (self.lambda_1 * _entropy(logits) + 
+                    self.lambda_2 * _kl_loss(logits))
+        
+        return loss_sum
 
 class CE_KL_review_3(nn.Module):
     def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, confidence_threshold=0.6, num_classes=4, entropy_threshold=0.5):
@@ -653,3 +881,142 @@ class ConsSamples_selection_two_stage_weighted_4_1_review_4_1(nn.Module):
 
         return loss_sum
 
+
+class ConsSamples_selection_two_stage_weighted_4_1_review_4_2(nn.Module):
+    # special version for two stage model updating
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, entropy_threshold=0.5, ratio_reivew=0.25, weight_type='entropy_energy'):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+        self.scale = scale
+        self.entropy_threshold = entropy_threshold  # Threshold for entropy_avg
+        self.ratio_review = ratio_reivew
+        self.weight_type = weight_type
+
+    def forward(self, logits, logits_initial, review_data_logits):
+        
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+
+        # 判断是否需要进行阈值更新
+        if entropy_avg < self.entropy_threshold:
+            # 计算对比损失函数
+            if not review_data_logits.shape[0] == 0:
+                cons_loss = contrastive_loss_samples_selection_review_2_1(logits, review_data_logits, ratio=self.ratio, ratio_review=self.ratio_review, temperature=self.temp, weight_type=self.weight_type)
+            else:
+                cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp, weight_type=self.weight_type)
+        else:
+            cons_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
+            
+        # Transform input for weight calculation
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+
+        # Constrain output to [0,1] using Sigmoid
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+        # Compute final loss
+        loss_sum = self.lambda_3 * weight_ * cons_loss
+
+        return loss_sum
+    
+class ConsSamples_selection_two_stage_weighted_4_1_review_4_3(nn.Module):
+    # special version for two stage model updating
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, entropy_threshold=0.5, ratio_reivew=0.25, weight_type='entropy_energy', thre_alpha=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+        self.scale = scale
+        self.entropy_threshold = entropy_threshold  # Threshold for entropy_avg
+        self.ratio_review = ratio_reivew
+        self.weight_type = weight_type
+        self.thre_alpha = thre_alpha
+
+    def forward(self, logits, logits_initial, review_data_logits, current_threshold):
+        
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+
+        # 归一化当前的阈值
+        C = logits.size(1)  # categories
+        C_tensor = torch.tensor(C, dtype=torch.float, device=logits.device)
+        max_entropy = torch.log(C_tensor)
+        current_threshold = self.thre_alpha * current_threshold / max_entropy
+
+        # 判断是否需要进行阈值更新
+        if entropy_avg < current_threshold:
+            # 计算对比损失函数
+            if not review_data_logits.shape[0] == 0:
+                cons_loss = contrastive_loss_samples_selection_review_2_1(logits, review_data_logits, ratio=self.ratio, ratio_review=self.ratio_review, temperature=self.temp, weight_type=self.weight_type)
+            else:
+                cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp, weight_type=self.weight_type)
+        else:
+            cons_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
+            
+        # Transform input for weight calculation
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+
+        # Constrain output to [0,1] using Sigmoid
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+        # Compute final loss
+        loss_sum = self.lambda_3 * weight_ * cons_loss
+
+        return loss_sum
+    
+
+class ConsSamples_selection_two_stage_weighted_4_1_review_4_4(nn.Module):
+    # special version for two stage model updating
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, entropy_threshold=0.5, ratio_reivew=0.25, weight_type='entropy_energy', thre_alpha=1.0):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+        self.scale = scale
+        self.entropy_threshold = entropy_threshold  # Threshold for entropy_avg
+        self.ratio_review = ratio_reivew
+        self.weight_type = weight_type
+        self.thre_alpha = thre_alpha
+
+    def forward(self, logits, logits_initial, review_data_logits, current_threshold, current_threshold_std):
+        
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+
+        # 归一化当前的阈值
+        C = logits.size(1)  # categories
+        C_tensor = torch.tensor(C, dtype=torch.float, device=logits.device)
+        max_entropy = torch.log(C_tensor)
+        _threshold = current_threshold / max_entropy + self.thre_alpha * current_threshold_std / max_entropy
+
+        # 判断是否需要进行阈值更新
+        if entropy_avg < _threshold:
+            # 计算对比损失函数
+            if not review_data_logits.shape[0] == 0:
+                cons_loss = contrastive_loss_samples_selection_review_2_1(logits, review_data_logits, ratio=self.ratio, ratio_review=self.ratio_review, temperature=self.temp, weight_type=self.weight_type)
+            else:
+                cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp, weight_type=self.weight_type)
+        else:
+            cons_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
+            
+        # Transform input for weight calculation
+        transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+
+        # Constrain output to [0,1] using Sigmoid
+        weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+        # Compute final loss
+        loss_sum = self.lambda_3 * weight_ * cons_loss
+
+        return loss_sum

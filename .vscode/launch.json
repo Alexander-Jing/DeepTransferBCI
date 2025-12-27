@@ -261,7 +261,7 @@
             "name": "Python: TTA-BCNI2014001-4-all-proposed",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_35.py",
+            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_38.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -285,9 +285,10 @@
                 "--batch_size_online", "8",
                 "--stride", "8",
                 "--use_BN", "False",
-                "--loss_func", "CE_KL_review_weighted_3,ConsSamples_selection_two_stage_weighted_4_1_review_4_1",
+                "--loss_func", "CE_KL_review_weighted_9,ConsSamples_selection_two_stage_weighted_4_1_review_4_4",
                 //"--presudo_src", "False",
-                "--selection_ratio", "1.0",
+                "--selection_ratio", "0.75",
+                "--selection_ratio_review", "0.25",
                 "--updating_type", "entropy_review",
                 "--mt", "0.1",
                 "--loss_weights", "1.0, 1.0, 1.0",
@@ -295,10 +296,11 @@
                 "--confidence_threshold", "0.45 ",
                 "--entropy_threshold", "0.55",
                 "--calibrate_probs", "False",
-                "--memory_type", "DropMemoryBank_review_7",
+                "--memory_type", "DropMemoryBank_review_8",
                 "--memory_review", "get_memory",
                 "--weight_type", "entropy",
                 "--memory_capacity", "64",
+                "--thre_alpha", "1.0",
 
             ],
             "env": {

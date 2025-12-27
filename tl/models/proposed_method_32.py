@@ -15,7 +15,7 @@ from easydict import EasyDict as edict
 
 # from robustbench.model_zoo.architectures.utils_architectures import normalize_model, ImageNormalizer
 from tl.utils.memory_proposed_2 import DropMemoryBank, DropMemoryBank_review, DropMemoryBank_review_1, OnlineBuffer, OnlineBufferInstance
-from tl.utils.memory_proposed_3 import DropMemoryBank_review_2, DropMemoryBank_review_3, DropMemoryBank_review_4, DropMemoryBank_review_5, DropMemoryBank_review_6, DropMemoryBank_review_7
+from tl.utils.memory_proposed_3 import DropMemoryBank_review_2, DropMemoryBank_review_3, DropMemoryBank_review_4, DropMemoryBank_review_5, DropMemoryBank_review_6, DropMemoryBank_review_7, DropMemoryBank_review_8
 from tl.utils.loss_proposed_1 import MemorySoftplusEnergyAlignment, CE_MDR, PresudoLabelMemorySoftplusEnergyAlignment, MemorySoftplusEnergyWeightedAlignment, \
     MemorySoftplusEnergyRatioSortedAlignment, MemorySoftplusEnergyFeatureWeightedAlignment, MemorySoftplusEnergyWeightedAlignmentMDR, \
         CaliE_MDR, CaliE_UKL, CE_KL, CaliE_KL, EnergyEntropy_selected, EnergyEntropy_selected_all, EnergyEntropy_selected_align, PresudoLabelEMA, PresudoLabelEMA_selection, \
@@ -25,7 +25,7 @@ from tl.utils.loss_proposed_1 import MemorySoftplusEnergyAlignment, CE_MDR, Pres
         ConsSamples_selection_two_stage, ConsSamples_selection_two_stage_weighted, ConsSamples_selection_two_stage_weighted_1, ConsSamples_selection_two_stage_weighted_2, ConsSamples_selection_two_stage_weighted_3, ConsSamples_selection_two_stage_weighted_4, ConsSamples_selection_two_stage_weighted_4_1, \
             ConsSamples_selection_two_stage_weighted_4_1_double, ConsSamples_selection_two_stage_weighted_4_1_double_1, CE_KL_review, CE_KL_review_weighted, CE_KL_review_weighted_1, CE_KL_review_weighted_2, CE_KL_review_weighted_3, CE_KL_review_weighted_4, CE_KL_review_weighted_5, ConsSamples_selection_two_stage_weighted_4_1_review, \
             ConsSamples_selection_two_stage_weighted_4_1_review_1, ConsSamples_selection_two_stage_weighted_4_1_review_2, ConsSamples_selection_two_stage_weighted_4_1_review_3, CE_KL_review_weighted_3_1, ConsSamples_selection_two_stage_weighted_4_1_review_4, ConsSamples_selection_two_stage_weighted_4_1_review_4_1, CE_KL_review_weighted_3_2
-from tl.utils.loss_proposed_1_1 import CE_KL_review_3, CE_KL_review_weighted_6
+from tl.utils.loss_proposed_1_1 import CE_KL_review_3, CE_KL_review_weighted_6, CE_KL_review_weighted_7, ConsSamples_selection_two_stage_weighted_4_1_review_4_2, CE_KL_review_weighted_8, ConsSamples_selection_two_stage_weighted_4_1_review_4_3, CE_KL_review_weighted_9, ConsSamples_selection_two_stage_weighted_4_1_review_4_4
 from tl.utils.calibration_proposed import CalibratedPseudoLabels
 from tl.utils.optimizer_proposed import build_optimizer
 from tl.utils.network import backbone_net
@@ -108,6 +108,9 @@ class proposed_TTA(nn.Module):
                                      category_uniform)
         elif self.memory_type in ['DropMemoryBank_review_7']:
             self.memory = DropMemoryBank_review_7(capacity, num_classes, confidence_threshold, uncertainty_threshold,
+                                     category_uniform)
+        elif self.memory_type in ['DropMemoryBank_review_8']:
+            self.memory = DropMemoryBank_review_8(capacity, num_classes, confidence_threshold, uncertainty_threshold,
                                      category_uniform)
         
         self.memory_copy = deepcopy(self.memory)
@@ -416,6 +419,7 @@ class proposed_TTA(nn.Module):
                 review_data, review_data_logits, review_data_class = deepcopy(self.memory.get_memory_review_1(self.batch_size_online))
             elif self.memory_review in ['get_memory']:
                 review_data, review_data_logits, review_data_class = deepcopy(self.memory.get_memory())
+                _, mean_entropy, std_entropy = deepcopy(self.memory.compute_logits_entropy())
 
             if len(review_data) == 0:
                 # generate empty tensors
@@ -662,8 +666,12 @@ class proposed_TTA(nn.Module):
                             if self.losses[0].strip() in ["CE_KL_review"]: 
                                 loss = loss_fn(preds_of_data, preds_of_data_review, review_data_class)
                             elif self.losses[0].strip() in ["CE_KL_review_weighted","CE_KL_review_weighted_1","CE_KL_review_weighted_2","CE_KL_review_weighted_3", "CE_KL_review_3", 
-                                                            "CE_KL_review_weighted_3_1", "CE_KL_review_weighted_3_2", "CE_KL_review_weighted_4", "CE_KL_review_weighted_5","CE_KL_review_weighted_6"]: 
+                                                            "CE_KL_review_weighted_3_1", "CE_KL_review_weighted_3_2", "CE_KL_review_weighted_4", "CE_KL_review_weighted_5","CE_KL_review_weighted_6","CE_KL_review_weighted_7"]: 
                                 loss = loss_fn(preds_of_data, preds_of_data_review, review_data_class, review_data_logits)
+                            elif self.losses[0].strip() in ["CE_KL_review_weighted_8"]: 
+                                loss = loss_fn(preds_of_data, preds_of_data_review, review_data_class, review_data_logits, mean_entropy)
+                            elif self.losses[0].strip() in ["CE_KL_review_weighted_9"]: 
+                                loss = loss_fn(preds_of_data, preds_of_data_review, review_data_class, review_data_logits, mean_entropy, std_entropy)
                             else:
                                 loss = loss_fn(preds_of_data)
                         else: 
@@ -694,14 +702,18 @@ class proposed_TTA(nn.Module):
                                 loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), feas_of_data_1)
                             elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_double_1"]:
                                 loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), feas_of_data_1, self.prototypes)
-                            elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_review","ConsSamples_selection_two_stage_weighted_4_1_review_1","ConsSamples_selection_two_stage_weighted_4_1_review_4","ConsSamples_selection_two_stage_weighted_4_1_review_4_1"]: 
+                            elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_review","ConsSamples_selection_two_stage_weighted_4_1_review_1","ConsSamples_selection_two_stage_weighted_4_1_review_4","ConsSamples_selection_two_stage_weighted_4_1_review_4_1","ConsSamples_selection_two_stage_weighted_4_1_review_4_2"]: 
                                 loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), preds_of_data_review_1) 
+                            elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_review_4_3"]: 
+                                loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), preds_of_data_review_1, mean_entropy) 
+                            elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_review_4_4"]: 
+                                loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), preds_of_data_review_1, mean_entropy, std_entropy) 
                             elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_review_2", "ConsSamples_selection_two_stage_weighted_4_1_review_3"]: 
                                 loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), review_data_logits)                     
                             else:
                                 loss_1 = loss_fn_1(preds_of_data_1)
                         else:
-                            loss_1 = loss_fn_1_0(preds_of_data_1, preds_of_data.clone().detach())
+                            loss_1 = torch.tensor(0.0, device=preds_of_data_1.device, requires_grad=True)
                         
                         loss_1.backward()
                         self.optimizer.step()
@@ -1126,6 +1138,12 @@ def loss_prepare(loss_name, EnergyAlignment):
         return CE_KL_review_weighted_6(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold)
     elif loss_name == 'CE_KL_review_3':
         return CE_KL_review_3(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold)
+    elif loss_name == 'CE_KL_review_weighted_7':
+        return CE_KL_review_weighted_7(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold, ratio=EnergyAlignment.ratio)
+    elif loss_name == 'CE_KL_review_weighted_8':
+        return CE_KL_review_weighted_8(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold, ratio=EnergyAlignment.ratio, thre_alpha=EnergyAlignment.thre_alpha)
+    elif loss_name == 'CE_KL_review_weighted_9':
+        return CE_KL_review_weighted_9(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold, ratio=EnergyAlignment.ratio, thre_alpha=EnergyAlignment.thre_alpha)
     
 
     elif loss_name == 'CaliE_KL':
@@ -1209,6 +1227,12 @@ def loss_prepare(loss_name, EnergyAlignment):
         return ConsSamples_selection_two_stage_weighted_4_1_review_4(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale)
     elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_review_4_1':
         return ConsSamples_selection_two_stage_weighted_4_1_review_4_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, weight_type=EnergyAlignment.weight_type, ratio_reivew=EnergyAlignment.ratio_review)
+    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_review_4_2':
+        return ConsSamples_selection_two_stage_weighted_4_1_review_4_2(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, weight_type=EnergyAlignment.weight_type, ratio_reivew=EnergyAlignment.ratio_review)
+    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_review_4_3':
+        return ConsSamples_selection_two_stage_weighted_4_1_review_4_3(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, weight_type=EnergyAlignment.weight_type, ratio_reivew=EnergyAlignment.ratio_review, thre_alpha=EnergyAlignment.thre_alpha)
+    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_review_4_4':
+        return ConsSamples_selection_two_stage_weighted_4_1_review_4_4(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, weight_type=EnergyAlignment.weight_type, ratio_reivew=EnergyAlignment.ratio_review, thre_alpha=EnergyAlignment.thre_alpha)
     
     elif loss_name == 'ConsSamples_selection_1':
         return ConsSamples_selection_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)

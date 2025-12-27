@@ -2115,7 +2115,7 @@ class CE_KL_review_weighted_3(nn.Module):
         # 这里假设 _entropy 和 _kl_loss 是您定义的其他损失函数
         loss_sum = (self.lambda_1 * _entropy(logits) + 
                    self.lambda_2 * _kl_loss(logits) + 
-                   self.lambda_3 * weight_ * weighted_ce_loss)
+                   weight_ * weighted_ce_loss)
         
         return loss_sum
     
