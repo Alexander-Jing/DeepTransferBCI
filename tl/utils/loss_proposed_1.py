@@ -3135,7 +3135,7 @@ class ConsSamples_selection_two_stage_weighted_4(nn.Module):
 
 class ConsSamples_selection_two_stage_weighted_4_1(nn.Module):
     # special version for two stage model updating
-    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5):
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, weight_type='entropy_energy'):
         super().__init__()
         self.temp = temp
         self.softplus = nn.Softplus()
@@ -3144,6 +3144,7 @@ class ConsSamples_selection_two_stage_weighted_4_1(nn.Module):
         self.lambda_3 = lambda_3
         self.ratio = ratio  # Ratio of samples to select for entropy++lcs
         self.scale = scale
+        self.weight_type = weight_type
 
     def forward(self, logits, logits_initial):
         
@@ -3151,7 +3152,7 @@ class ConsSamples_selection_two_stage_weighted_4_1(nn.Module):
         entropy_normalized = _entropy_samples_normalized(logits_initial)
         entropy_avg = torch.mean(entropy_normalized)
         
-        cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp)
+        cons_loss = contrastive_loss_samples_selection(logits, ratio=self.ratio, temperature=self.temp, weight_type=self.weight_type)
 
         transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
         

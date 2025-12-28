@@ -261,7 +261,7 @@
             "name": "Python: TTA-BCNI2014001-4-all-proposed",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_38.py",
+            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_37.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -293,7 +293,7 @@
                 "--mt", "0.1",
                 "--loss_weights", "1.0, 1.0, 1.0",
                 "--scale", "10.0",
-                "--confidence_threshold", "0.45 ",
+                "--confidence_threshold", "0.40",
                 "--entropy_threshold", "0.55",
                 "--calibrate_probs", "False",
                 "--memory_type", "DropMemoryBank_review_8",
