@@ -16,7 +16,7 @@ from tl.utils.dataloader import read_mi_combine_tar
 from tl.utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist, build_optimizer, save_features_predictions
 from tl.utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
-from tl.models.proposed_method_32 import proposed_TTA
+from tl.models.proposed_method_31 import proposed_TTA
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 import gc
@@ -100,12 +100,8 @@ def motta_func(loader, model, args, balanced=True):
 
         if args.data_env != 'local':
             sample_test = torch.from_numpy(sample_test).to(torch.float32).cuda()
-            sample_test_origin = sample_test_origin.to(torch.float32).cuda()
         else:
             sample_test = torch.from_numpy(sample_test).to(torch.float32)
-            sample_test_origin = sample_test_origin.to(torch.float32)
-
-        # print("tensor equal:", torch.equal(sample_test, sample_test_origin))  # for debug
 
         fea_outputs, outputs = proposed_TTA_model(sample_test, sample_test_origin, sqrtRefEA)
 

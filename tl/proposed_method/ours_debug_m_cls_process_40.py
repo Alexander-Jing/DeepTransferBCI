@@ -16,7 +16,7 @@ from tl.utils.dataloader import read_mi_combine_tar
 from tl.utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist, build_optimizer, save_features_predictions
 from tl.utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
-from tl.models.proposed_method_32 import proposed_TTA
+from tl.models.proposed_method_34 import proposed_TTA
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 import gc
@@ -343,6 +343,9 @@ if __name__ == '__main__':
     parser.add_argument('--weight_type', type=str, default='entropy_energy', help='type of weights for sample selection')
     parser.add_argument('--memory_capacity', type=int, default=64, help='capacity for the memory buffer')
     parser.add_argument('--thre_alpha', type=float, default=1.0, help='thre_alpha * threshold, the scale factor for dynamic threshold')
+    parser.add_argument('--loss_weight_type', type=str, default='sigmoid', help='type of weights for two-satge updating')
+    parser.add_argument('--gate_type', type=str, default='mean', help='type of weights for gating')
+    parser.add_argument('--buffer_selefction_type', type=str, default='confidence', help='type of weights for buffer selection')
     
     args_parser = parser.parse_args()
 
@@ -382,6 +385,9 @@ if __name__ == '__main__':
     memory_capacity = args_parser.memory_capacity
     selection_ratio_review = args_parser.selection_ratio_review
     thre_alpha = args_parser.thre_alpha
+    loss_weight_type = args_parser.loss_weight_type
+    gate_type = args_parser.gate_type
+    buffer_selefction_type = args_parser.buffer_selefction_type
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -507,7 +513,11 @@ if __name__ == '__main__':
             "weight_type": weight_type,
             "ratio_review": selection_ratio_review,    
             "thre_alpha": thre_alpha,
+            "loss_weight_type": loss_weight_type,
+            "gate_type": gate_type,
+            "buffer_selefction_type": buffer_selefction_type,
         })
+        # print(loss_weights[0], loss_weights[1], loss_weights[2])
         args.capacity = memory_capacity
         args.bn_alpha = 0.1
         args.uncertainty_threshold = 0.75

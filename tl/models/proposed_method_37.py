@@ -26,8 +26,9 @@ from tl.utils.loss_proposed_1 import MemorySoftplusEnergyAlignment, CE_MDR, Pres
         ConsSamples_selection_two_stage, ConsSamples_selection_two_stage_weighted, ConsSamples_selection_two_stage_weighted_1, ConsSamples_selection_two_stage_weighted_2, ConsSamples_selection_two_stage_weighted_3, ConsSamples_selection_two_stage_weighted_4, ConsSamples_selection_two_stage_weighted_4_1, \
             ConsSamples_selection_two_stage_weighted_4_1_double, ConsSamples_selection_two_stage_weighted_4_1_double_1, CE_KL_review, CE_KL_review_weighted, CE_KL_review_weighted_1, CE_KL_review_weighted_2, CE_KL_review_weighted_3, CE_KL_review_weighted_4, CE_KL_review_weighted_5, ConsSamples_selection_two_stage_weighted_4_1_review, \
             ConsSamples_selection_two_stage_weighted_4_1_review_1, ConsSamples_selection_two_stage_weighted_4_1_review_2, ConsSamples_selection_two_stage_weighted_4_1_review_3, CE_KL_review_weighted_3_1, ConsSamples_selection_two_stage_weighted_4_1_review_4, ConsSamples_selection_two_stage_weighted_4_1_review_4_1, CE_KL_review_weighted_3_2
-from tl.utils.loss_proposed_1_1 import CE_KL_review_3, CE_KL_review_weighted_6, CE_KL_review_weighted_7, ConsSamples_selection_two_stage_weighted_4_1_review_4_2, CE_KL_review_weighted_8, ConsSamples_selection_two_stage_weighted_4_1_review_4_3, CE_KL_review_weighted_9, ConsSamples_selection_two_stage_weighted_4_1_review_4_4
-from tl.utils.calibration_proposed import CalibratedPseudoLabels
+from tl.utils.loss_proposed_1_1 import CE_KL_review_3, CE_KL_review_weighted_6, CE_KL_review_weighted_7, ConsSamples_selection_two_stage_weighted_4_1_review_4_2, CE_KL_review_weighted_8, ConsSamples_selection_two_stage_weighted_4_1_review_4_3, CE_KL_review_weighted_9, ConsSamples_selection_two_stage_weighted_4_1_review_4_4, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_1, \
+     ConsSamples_selection_two_stage_weighted_4_1_review_4_4_2, CE_KL_review_weighted_10, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_3, ConsSamples_selection_two_stage_weighted_4_1_modified
+from tl.utils.calibration_proposed import CalibratedPseudoLabels, DynamicThresholdSelector
 from tl.utils.optimizer_proposed import build_optimizer
 from tl.utils.network import backbone_net
 from tl.utils.adaptiveLR_proposed import AdaptiveLRScheduler, AdaptiveLRScheduler_1
@@ -84,7 +85,8 @@ class proposed_TTA(nn.Module):
         self.calibrate_probs = calibrate_probs
         self.memory_type = memory_type
         self.memory_review = memory_review
-
+        self.show_run_time = False
+        
         # memory
         if self.memory_type in ['DropMemoryBank_review']:
             self.memory = DropMemoryBank_review(capacity, num_classes, confidence_threshold, uncertainty_threshold,
@@ -198,6 +200,8 @@ class proposed_TTA(nn.Module):
         self.online_buffer = OnlineBufferInstance(buffer_size=batch_size_online)
         self.batch_size_online = batch_size_online
         self.probs_calibrated =  CalibratedPseudoLabels(n_classes=self.num_classes, device=self.device)
+        self.dynamic_threshold_selector = DynamicThresholdSelector(num_classes=num_classes, base_threshold=self.confidence_threshold, momentum=0.9, min_threshold=self.EnergyAlignment.min_threshold)
+        self.dynamic_threshold_selector.reset()
 
         if record:
             self.record = {}
@@ -305,13 +309,29 @@ class proposed_TTA(nn.Module):
                     p_l = pseudo_label[i].item()
                     conf = pseudo_conf[i].item()
                     uncertainty = weights[i].item()
+                    entropy_item = entropy[i].item()
                     current_instance = edict(data=data, prediction=p_l, uncertainty=uncertainty,
                                             logit=out[i].detach().clone(), confidence=conf, time_stamp=self.num_instance)  # instance includes the feature, pesudo label, weights, and probability
                     self.online_buffer.add_instance(current_instance) # add to the memory bank
+                    # prob_item = prob[i].detach().clone()
+                    # top2 = torch.topk(prob_item, 2).values
 
                     # save the instances in the memory based on confidence threshold
-                    if conf >= self.confidence_threshold:
-                        self.memory.add_instance(current_instance)
+                    if self.EnergyAlignment.buffer_selefction_type in ["confidence"]:
+                        if conf >= self.confidence_threshold:
+                            self.memory.add_instance(current_instance)
+                    if self.EnergyAlignment.buffer_selefction_type in ["dynamic_confidence"]: 
+                        is_selected, _, _, _ = self.dynamic_threshold_selector.check_sample(out[i].detach().clone().unsqueeze(0))
+                        if is_selected:  # low entropy samples
+                            self.memory.add_instance(current_instance)
+                    elif self.EnergyAlignment.buffer_selefction_type in ["entropy"]:
+                        C_tensor = torch.tensor(self.num_classes, dtype=torch.float, device=entropy.device)
+                        max_entropy = torch.log(C_tensor)
+                        if entropy_item/max_entropy <= self.confidence_threshold:  # low entropy samples
+                            self.memory.add_instance(current_instance)
+                    else:
+                        if conf >= self.confidence_threshold:
+                            self.memory.add_instance(current_instance)
 
             
 
@@ -330,31 +350,7 @@ class proposed_TTA(nn.Module):
             else:
                 if self.num_instance >= self.batch_size_online and self.memory.get_occupancy() >= self.num_classes*self.batch_size_online and self.num_instance % self.update_frequency == 0:
                     update_model_flag = True
-            
-        # save the selected instances to the memory bank
-        if self.num_instance >= self.batch_size_online and self.num_instance % self.update_frequency == 0:
-            if not self.paras_optim['two_stage']:
-                if self.updating_type in ["cls_proto"]:
-                    # save the instances in the memory
-                    weights = self.online_buffer.get_weights()
-                    k = max(1, int(self.EnergyAlignment.ratio * weights.shape[0]))
-                    _, topk_indices = torch.topk(weights, k, largest=False, sorted=False)
-                    selected_indices = set(topk_indices.tolist())
-                    for i, _instance in enumerate(self.online_buffer.get_instance()):
-                        if i in selected_indices:
-                            self.memory.add_instance(_instance)
-            else:
-                if self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_double_1"]:
-                    # save the instances in the memory
-                    weights = self.online_buffer.get_weights()
-                    k = max(1, int(self.EnergyAlignment.ratio * weights.shape[0]))
-                    _, topk_indices = torch.topk(weights, k, largest=False, sorted=False)
-                    selected_indices = set(topk_indices.tolist())
-                    for i, _instance in enumerate(self.online_buffer.get_instance()):
-                        if i in selected_indices:
-                            self.memory.add_instance(_instance)
-                
-            
+
         
         # update model
         if update_model_flag:
@@ -362,33 +358,10 @@ class proposed_TTA(nn.Module):
             
             for _ in range(self.steps):
                 self.update_model(self.online_buffer.get_data(), sqrtRefEA)
-                
-            if self.updating_type == "ema":
-                self.model_ema = self.update_ema_variables(ema_model=self.model_ema, model=self.model, alpha_teacher=self.mt)
-            if self.updating_type == "entropy_ema":
-                self.model_ema = self.update_ema_variables(ema_model=self.model_ema, model=self.model, alpha_teacher=self.mt)
-            if self.updating_type == "entropy_ensamble":
-                for name, param in self.model_initial.named_parameters():
-                    if not torch.equal(param.data, self.initial_reference[name]):
-                        print(f"Warning: Initial model parameter {name} has been modified!")
-                self.model = self.update_with_initial(
-                    current_model=self.model,
-                    initial_model=self.model_initial, 
-                    alpha=self.mt 
-                )
-                
-                """
-                current_state_1 = self.model.state_dict()
-                initial_state_1 = self.model_initial.state_dict()
-
-                # 详细比较每一个键值对
-                for key in current_state_1:
-                    if not torch.allclose(current_state_1[key], initial_state_1[key]):
-                        print(f"更新{self.num_instance}：状态不匹配: {key}")
-                """
             
             update_time_end = time.time()
-            # print(f"num instance: {self.num_instance}, update time: {update_time_end - update_time_start:.3f} seconds")
+            if self.show_run_time:
+                print(f"num instance: {self.num_instance}, whole model update time: {update_time_end - update_time_start:.3f} seconds")
 
         # return outputs
         return fea, out
@@ -396,7 +369,7 @@ class proposed_TTA(nn.Module):
     @torch.enable_grad()
     def update_model(self, batch_data, sqrtRefEA):
         
-        # load_data_time_start = time.time()
+        load_data_time_start = time.time()
         if not self.paras_optim['two_stage']:
             loss_fn = self.loss_fn
         else:
@@ -404,12 +377,9 @@ class proposed_TTA(nn.Module):
             loss_fn_1 = self.loss_fn_1
             if self.updating_type in ["entropy_review", "entropy_review_1", "entropy_review_2"]:
                 loss_fn_0 = loss_prepare(loss_name="CE_KL", EnergyAlignment=self.EnergyAlignment)
-                loss_fn_1_0 = loss_prepare(loss_name="ConsSamples_selection_two_stage_weighted_4_1", EnergyAlignment=self.EnergyAlignment)
+                loss_fn_1_0 = loss_prepare(loss_name="ConsSamples_selection_two_stage_weighted_4_1_modified", EnergyAlignment=self.EnergyAlignment)
 
         # prepare the data from current batch and memory
-        if self.updating_type == "presudo_src":
-            pre_source_data, pre_source_uncertainty, pre_source_labels = deepcopy(self.memory.get_memory()) # use the filtered data from memory
-        sup_data = deepcopy(batch_data)
         if not self.paras_optim['two_stage']:
             if self.updating_type in ["cls_proto"]:
                 prototypes = deepcopy(self.memory.get_prototypes(ratio=self.EnergyAlignment.ratio))
@@ -428,11 +398,16 @@ class proposed_TTA(nn.Module):
                 #review_data, review_data_logits, review_data_class = deepcopy(self.memory.get_memory())
                 #_, mean_entropy, std_entropy = deepcopy(self.memory.compute_logits_entropy())
                 review_data, review_data_logits, review_data_class = self.memory.get_memory()
-                _, mean_entropy, std_entropy = self.memory.compute_logits_entropy()
+                if self.EnergyAlignment.gate_type in ['median']:
+                    _, mean_entropy, std_entropy = self.memory.compute_logits_entropy_median_iqr()
+                elif self.EnergyAlignment.gate_type in ['mean']:
+                    _, mean_entropy, std_entropy = self.memory.compute_logits_entropy()
+                else:
+                    _, mean_entropy, std_entropy = self.memory.compute_logits_entropy()
 
             if len(review_data) == 0:
                 # generate empty tensors
-                C,H,W = sup_data[0].shape
+                C,H,W = batch_data[0].shape
                 review_data = torch.empty((0, C, H, W)).cuda()
                 review_data_logits = torch.empty((0, self.num_classes)).cuda()
                 review_data_class = torch.empty((0,), dtype=torch.long).cuda()
@@ -443,16 +418,17 @@ class proposed_TTA(nn.Module):
             
             review_data, review_data_logits, review_data_class = review_data.clone(), review_data_logits.clone(), review_data_class.clone()
         
-        # load_data_time_end = time.time()
-        # print(f"num instance: {self.num_instance}, load data time: {load_data_time_end - load_data_time_start:.4f} seconds")
+        load_data_time_end = time.time()
+        if self.show_run_time:
+            print(f"num instance: {self.num_instance}, load data time: {load_data_time_end - load_data_time_start:.4f} seconds")
         
-        if len(sup_data) > 0:
+        if len(batch_data) > 0:
             
-            # prepare_data_time_start = time.time()
+            prepare_data_time_start = time.time()
 
             # prepare the data from current batch and memory
-            sup_data = torch.stack(sup_data)
-            sup_data = sup_data.cuda(non_blocking=True)
+            sup_data = torch.stack(batch_data).cuda().clone()
+
             if self.updating_type in ["presudo_src"]:
                 pre_source_data = torch.stack(pre_source_data)
                 pre_source_data = pre_source_data.cuda(non_blocking=True)
@@ -479,93 +455,16 @@ class proposed_TTA(nn.Module):
                 class_centers, unique_labels, missing_classes_flag = self.compute_class_centers(feas_of_data, pre_source_labels)
                 class_centers = class_centers.detach()
                 
-            # prepare_data_time_end = time.time()
-            # print(f"num instance: {self.num_instance}, prepare data time: {prepare_data_time_end - prepare_data_time_start:.4f} seconds")
+            prepare_data_time_end = time.time()
+            if self.show_run_time:
+                print(f"num instance: {self.num_instance}, prepare data time: {prepare_data_time_end - prepare_data_time_start:.4f} seconds")
 
             self.model.train()
             if not self.paras_optim['two_stage']:
-                if self.paras_optim['name'] == 'GAM':
-                    self.optimizer.set_unsup_closure(loss_fn, sup_data)
-
-                    self.optimizer.step()
-                elif self.paras_optim['name'] == 'SAM':
-
-                    if self.return_type=='xy':
-                        _, preds_of_data = self.model(sup_data)
-                    elif self.return_type == 'y':
-                        preds_of_data = self.model(sup_data)
-                    
-                    loss_first = loss_fn(preds_of_data)
-
-                    self.optimizer.zero_grad()
-
-                    loss_first.backward()
-
-                    # compute \hat{\epsilon(\Theta)} for first order approximation, Eqn. (4)
-                    self.optimizer.first_step(zero_grad=True)
-
-                    if self.return_type=='xy':
-                        _, preds_of_data = self.model(sup_data)
-                    elif self.return_type == 'y':
-                        preds_of_data = self.model(sup_data)
-
-                    # second time backward, update model weights using gradients at \Theta+\hat{\epsilon(\Theta)}
-                    loss_second = loss_fn(preds_of_data)
-
-                    loss_second.backward()
-
-                    self.optimizer.second_step(zero_grad=True)
                 
-                elif self.paras_optim['name'] == 'Adam':
+                if self.paras_optim['name'] == 'Adam':
                     
-                    if self.updating_type == "presudo_src":
-
-                        if self.return_type=='xy':
-                            _, preds_of_pre_source_data = self.model(pre_source_data)
-                            feas_of_data_batch, preds_of_data = self.model(sup_data)
-                        elif self.return_type == 'y':
-                            preds_of_pre_source_data = self.model(pre_source_data)
-                            preds_of_data = self.model(sup_data)
-                        
-                        if self.loss_name in ['MemorysoftplusEnergyAlignment', 'presudoLabelMemorySoftplusEnergyAlignment', 
-                                            'presudoLabelMemorySoftplusEnergyAlignment', 'MemorysoftplusEnergyRatiosortedAlignment',
-                                                'MemorySoftplusEnergyWeightedAlignmentMDR']:
-                            loss = loss_fn(preds_of_data, preds_of_pre_source_data)
-                        elif self.loss_name in ['MemorySoftplusEnergyFeatureWeightedAlignment']:
-                            loss = loss_fn(preds_of_data, feas_of_data_batch.detach(), class_centers, missing_classes_flag)
-
-                        self.optimizer.zero_grad()
-
-                        loss.backward()
-
-                        self.optimizer.step()
-                    
-                    elif self.updating_type == "ema":
-                        
-                        if self.return_type=='xy':
-                            _, preds_of_data_ema = self.model_ema(sup_data)
-                            feas_of_data_batch, preds_of_data = self.model(sup_data)
-                        elif self.return_type == 'y':
-                            preds_of_data_ema = self.model_ema(sup_data)
-                            preds_of_data = self.model(sup_data)
-
-                        if self.loss_name in ["PresudoLabelEMA_lcs", "EntropyMDREMA_lcs"]:
-                            cls_weight = self.model[1].fc.weight.data.clone()
-                        
-                        if self.loss_name in ["PresudoLabelEMA_lcs", "EntropyMDREMA_lcs"]:
-                            loss = loss_fn(preds_of_data, preds_of_data_ema, cls_weight)
-                        else:
-                            loss = loss_fn(preds_of_data, preds_of_data_ema)
-
-                        
-                        self.optimizer.zero_grad()
-
-                        loss.backward()
-
-                        self.optimizer.step()
-
-
-                    elif self.updating_type == "entropy":
+                    if self.updating_type == "entropy":
 
                         if self.return_type=='xy':
                             feas_of_data, preds_of_data = self.model(sup_data)
@@ -667,7 +566,7 @@ class proposed_TTA(nn.Module):
 
                     
                     if self.updating_type in ["entropy_review"]:    
-                        # time_start = time.time()
+                        time_start = time.time()
                         # first step
                         if self.return_type=='xy':
                             feas_of_data, preds_of_data = self.model(sup_data)
@@ -688,7 +587,7 @@ class proposed_TTA(nn.Module):
                                 loss = loss_fn(preds_of_data, preds_of_data_review, review_data_class, review_data_logits)
                             elif self.losses[0].strip() in ["CE_KL_review_weighted_8"]: 
                                 loss = loss_fn(preds_of_data, preds_of_data_review, review_data_class, review_data_logits, mean_entropy)
-                            elif self.losses[0].strip() in ["CE_KL_review_weighted_9"]: 
+                            elif self.losses[0].strip() in ["CE_KL_review_weighted_9","CE_KL_review_weighted_10"]: 
                                 loss = loss_fn(preds_of_data, preds_of_data_review, review_data_class, review_data_logits, mean_entropy, std_entropy)
                             else:
                                 loss = loss_fn(preds_of_data)
@@ -724,7 +623,7 @@ class proposed_TTA(nn.Module):
                                 loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), preds_of_data_review_1) 
                             elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_review_4_3"]: 
                                 loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), preds_of_data_review_1, mean_entropy) 
-                            elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_review_4_4"]: 
+                            elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_review_4_4","ConsSamples_selection_two_stage_weighted_4_1_review_4_4_1","ConsSamples_selection_two_stage_weighted_4_1_review_4_4_2", "ConsSamples_selection_two_stage_weighted_4_1_review_4_4_3"]: 
                                 loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), preds_of_data_review_1, mean_entropy, std_entropy) 
                             elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_review_2", "ConsSamples_selection_two_stage_weighted_4_1_review_3"]: 
                                 loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach(), review_data_logits)                     
@@ -742,71 +641,9 @@ class proposed_TTA(nn.Module):
                             for param_group in self.optimizer.param_groups:
                                param_group['lr'] = original_lr
 
-                        # time_end = time.time()
-                        #print(f"num instance: {self.num_instance}, update time: {time_end - time_start:.2f} seconds")
-
-
-                    if self.updating_type in ["entropy_review_1", "entropy_review_2"]:    
-                        # first step
-                        if self.return_type=='xy':
-                            feas_of_data, preds_of_data = self.model(sup_data)
-                            if not review_data.shape[0] == 0:
-                                feas_of_data_review, preds_of_data_review = self.model(review_data)
-                            else:
-                                feas_of_data_review = torch.empty((0, feas_of_data.shape[1])).cuda()
-                                preds_of_data_review = torch.empty((0, self.num_classes)).cuda()
-                        elif self.return_type == 'y':
-                            preds_of_data = self.model(sup_data)
-                        
-                        if self.memory.get_occupancy() >= self.num_classes*self.batch_size_online:
-
-                            if self.losses[0].strip() in ["CE_KL"]: 
-                                loss = loss_fn(preds_of_data_review)
-                            else:
-                                loss = loss_fn(preds_of_data_review)
-                        else: 
-                            loss = loss_fn_0(preds_of_data)
-                        
-                        self.optimizer.zero_grad()
-                        loss.backward()
-                        self.optimizer.step()
-
-                        # zero grad
-                        self.optimizer.zero_grad()
-
-                        # second step
-                        if self.return_type=='xy':
-                            feas_of_data_1, preds_of_data_1 = self.model(sup_data)
-                            if not review_data.shape[0] == 0:
-                                feas_of_data_review_1, preds_of_data_review_1 = self.model(review_data)
-                            else:
-                                feas_of_data_review_1 = torch.empty((0, feas_of_data.shape[1])).cuda()
-                                preds_of_data_review_1 = torch.empty((0, self.num_classes)).cuda()
-                        elif self.return_type == 'y':
-                            preds_of_data_1 = self.model(sup_data)
-                        
-                        if self.memory.get_occupancy() >= self.num_classes*self.batch_size_online:
-
-                            if self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1"]: 
-                                loss_1 = loss_fn_1(preds_of_data_review_1, preds_of_data_review.clone().detach())                     
-                            else:
-                                loss_1 = loss_fn_1(preds_of_data_review_1, preds_of_data_review.clone().detach())
-                        else:
-                            loss_1 = loss_fn_1_0(preds_of_data_1, preds_of_data.clone().detach())
-                        
-                        loss_1.backward()
-                        self.optimizer.step()
-
-                        self.optimizer.zero_grad()
-
-                        if self.losses[1].strip() in ["ConsSamples_selection_two_stage_adaptiveLR_2"]:
-                            for param_group in self.optimizer.param_groups:
-                               param_group['lr'] = original_lr
-
-
-            
-            
-
+                        time_end = time.time()
+                        if self.show_run_time:
+                            print(f"num instance: {self.num_instance}, update time: {time_end - time_start:.2f} seconds")
 
     def check_updates(self):
         is_update = is_updated(self.feature_extractor, self.feature_extractor_init)
@@ -1163,7 +1000,9 @@ def loss_prepare(loss_name, EnergyAlignment):
     elif loss_name == 'CE_KL_review_weighted_8':
         return CE_KL_review_weighted_8(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold, ratio=EnergyAlignment.ratio, thre_alpha=EnergyAlignment.thre_alpha)
     elif loss_name == 'CE_KL_review_weighted_9':
-        return CE_KL_review_weighted_9(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold, ratio=EnergyAlignment.ratio, thre_alpha=EnergyAlignment.thre_alpha)
+        return CE_KL_review_weighted_9(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold, ratio=EnergyAlignment.ratio, thre_alpha=EnergyAlignment.thre_alpha, gate_type=EnergyAlignment.gate_type)
+    elif loss_name == 'CE_KL_review_weighted_10':
+        return CE_KL_review_weighted_10(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold, ratio=EnergyAlignment.ratio, thre_alpha=EnergyAlignment.thre_alpha)
     
 
     elif loss_name == 'CaliE_KL':
@@ -1253,7 +1092,16 @@ def loss_prepare(loss_name, EnergyAlignment):
         return ConsSamples_selection_two_stage_weighted_4_1_review_4_3(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, weight_type=EnergyAlignment.weight_type, ratio_reivew=EnergyAlignment.ratio_review, thre_alpha=EnergyAlignment.thre_alpha)
     elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_review_4_4':
         return ConsSamples_selection_two_stage_weighted_4_1_review_4_4(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, weight_type=EnergyAlignment.weight_type, ratio_reivew=EnergyAlignment.ratio_review, thre_alpha=EnergyAlignment.thre_alpha)
+    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_review_4_4_1':
+        return ConsSamples_selection_two_stage_weighted_4_1_review_4_4_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, weight_type=EnergyAlignment.weight_type, ratio_reivew=EnergyAlignment.ratio_review, thre_alpha=EnergyAlignment.thre_alpha, loss_weight_type=EnergyAlignment.loss_weight_type, gate_type=EnergyAlignment.gate_type)
+    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_review_4_4_2':
+        return ConsSamples_selection_two_stage_weighted_4_1_review_4_4_2(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, weight_type=EnergyAlignment.weight_type, ratio_reivew=EnergyAlignment.ratio_review, thre_alpha=EnergyAlignment.thre_alpha, loss_weight_type=EnergyAlignment.loss_weight_type, gate_type=EnergyAlignment.gate_type)
+    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_review_4_4_3':
+        return ConsSamples_selection_two_stage_weighted_4_1_review_4_4_3(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, weight_type=EnergyAlignment.weight_type, ratio_reivew=EnergyAlignment.ratio_review, thre_alpha=EnergyAlignment.thre_alpha, loss_weight_type=EnergyAlignment.loss_weight_type, gate_type=EnergyAlignment.gate_type)
+    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_modified':
+        return ConsSamples_selection_two_stage_weighted_4_1_modified(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, weight_type='entropy_energy')
     
+
     elif loss_name == 'ConsSamples_selection_1':
         return ConsSamples_selection_1(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp)
     elif loss_name == 'ConsSamples_selection_2':

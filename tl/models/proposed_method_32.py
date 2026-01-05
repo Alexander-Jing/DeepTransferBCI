@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from torch import Tensor
 import torch.jit
 from torch.nn.utils import prune
+import time
 
 from easydict import EasyDict as edict
 
@@ -357,7 +358,7 @@ class proposed_TTA(nn.Module):
         
         # update model
         if update_model_flag:
-            
+            update_time_start = time.time()
             for _ in range(self.steps):
                 self.update_model(self.online_buffer.get_data(), sqrtRefEA)
                 
@@ -385,11 +386,15 @@ class proposed_TTA(nn.Module):
                         print(f"更新{self.num_instance}：状态不匹配: {key}")
                 """
 
+            update_time_end = time.time()
+            print(f"num instance: {self.num_instance}, whole model update time: {update_time_end - update_time_start:.3f} seconds")
         # return outputs
         return fea, out
 
     @torch.enable_grad()
     def update_model(self, batch_data, sqrtRefEA):
+
+        load_data_time_start = time.time()
         if not self.paras_optim['two_stage']:
             loss_fn = self.loss_fn
         else:
@@ -402,7 +407,7 @@ class proposed_TTA(nn.Module):
         # prepare the data from current batch and memory
         if self.updating_type == "presudo_src":
             pre_source_data, pre_source_uncertainty, pre_source_labels = deepcopy(self.memory.get_memory()) # use the filtered data from memory
-        sup_data = deepcopy(batch_data)
+        
         if not self.paras_optim['two_stage']:
             if self.updating_type in ["cls_proto"]:
                 prototypes = deepcopy(self.memory.get_prototypes(ratio=self.EnergyAlignment.ratio))
@@ -418,9 +423,11 @@ class proposed_TTA(nn.Module):
             elif self.memory_review in ['get_memory_review_1']:
                 review_data, review_data_logits, review_data_class = deepcopy(self.memory.get_memory_review_1(self.batch_size_online))
             elif self.memory_review in ['get_memory']:
-                review_data, review_data_logits, review_data_class = deepcopy(self.memory.get_memory())
-                _, mean_entropy, std_entropy = deepcopy(self.memory.compute_logits_entropy())
-
+                #review_data, review_data_logits, review_data_class = deepcopy(self.memory.get_memory())
+                #_, mean_entropy, std_entropy = deepcopy(self.memory.compute_logits_entropy())
+                review_data, review_data_logits, review_data_class = self.memory.get_memory()
+                _, mean_entropy, std_entropy = self.memory.compute_logits_entropy()
+            
             if len(review_data) == 0:
                 # generate empty tensors
                 C,H,W = sup_data[0].shape
@@ -432,12 +439,19 @@ class proposed_TTA(nn.Module):
                 review_data_logits = torch.stack(review_data_logits).cuda()
                 review_data_class = torch.tensor(review_data_class).cuda()
             
+            review_data, review_data_logits, review_data_class = review_data.clone(), review_data_logits.clone(), review_data_class.clone()
         
-        if len(sup_data) > 0:
+        load_data_time_end = time.time()
+        print(f"num instance: {self.num_instance}, load data time: {load_data_time_end - load_data_time_start:.4f} seconds")
+        
+        
+        if len(batch_data) > 0:
             
+            prepare_data_time_start = time.time()
+
             # prepare the data from current batch and memory
-            sup_data = torch.stack(sup_data)
-            sup_data = sup_data.cuda(non_blocking=True)
+            sup_data = torch.stack(batch_data).cuda().clone()
+            
             if self.updating_type in ["presudo_src"]:
                 pre_source_data = torch.stack(pre_source_data)
                 pre_source_data = pre_source_data.cuda(non_blocking=True)
@@ -464,6 +478,8 @@ class proposed_TTA(nn.Module):
                 class_centers, unique_labels, missing_classes_flag = self.compute_class_centers(feas_of_data, pre_source_labels)
                 class_centers = class_centers.detach()
                 
+            prepare_data_time_end = time.time()
+            print(f"num instance: {self.num_instance}, prepare data time: {prepare_data_time_end - prepare_data_time_start:.4f} seconds")
 
             self.model.train()
             if not self.paras_optim['two_stage']:
@@ -650,6 +666,7 @@ class proposed_TTA(nn.Module):
 
                     
                     if self.updating_type in ["entropy_review"]:    
+                        time_start = time.time()
                         # first step
                         if self.return_type=='xy':
                             feas_of_data, preds_of_data = self.model(sup_data)
@@ -723,6 +740,10 @@ class proposed_TTA(nn.Module):
                         if self.losses[1].strip() in ["ConsSamples_selection_two_stage_adaptiveLR_2"]:
                             for param_group in self.optimizer.param_groups:
                                param_group['lr'] = original_lr
+
+                        time_end = time.time()
+                        print(f"num instance: {self.num_instance}, update time: {time_end - time_start:.2f} seconds")
+
 
 
 

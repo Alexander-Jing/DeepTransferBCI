@@ -144,3 +144,79 @@ class CalibratedPseudoLabels:
             'ema_conf': self.ema_conf.cpu().numpy()
         }
 
+
+class DynamicThresholdSelector:
+    def __init__(self, num_classes, base_threshold=0.7, momentum=0.9, min_threshold=0.4):
+        """
+        初始化动态阈值选择器。
+        
+        Args:
+            num_classes (int): 分类总数 (e.g., 4 for MI-EEG)
+            base_threshold (float): 基准阈值 (你之前设置的固定阈值，如 0.6 或 0.7)
+            momentum (float): 移动平均的动量 (0-1), 越大则历史信息权重越大，更新越平滑。
+            min_threshold (float): 阈值下限，防止对某个极其困难的类别门槛降得过低引入噪声。
+        """
+        self.num_classes = num_classes
+        self.base_threshold = base_threshold
+        self.momentum = momentum
+        self.min_threshold = min_threshold
+        
+        # 初始化每个类别的平均置信度 (初始化为基准阈值，避免冷启动时波动过大)
+        # 使用 CPU tensor 存储状态，避免占用 GPU 显存
+        self.class_avg_conf = torch.ones(num_classes) * base_threshold
+
+    def check_sample(self, logits):
+        """
+        处理单个样本，判断是否应该存入 Buffer。
+        
+        Args:
+            logits (torch.Tensor): 模型的原始输出 (Logits), shape应为 (1, C) 或 (C,)
+        
+        Returns:
+            is_selected (bool): 是否通过筛选
+            pseudo_label (int): 预测的伪标签
+            confidence (float): 该样本的置信度
+            current_thresh (float): 该样本应用的具体阈值 (用于记录或调试)
+        """
+        # 1. 预处理输入，确保不计算梯度
+        with torch.no_grad():
+            if logits.dim() == 2:
+                logits = logits.squeeze(0) # 变成 (C,)
+            
+            # 计算概率和预测结果
+            probs = torch.softmax(logits, dim=0)
+            confidence, pseudo_label = torch.max(probs, dim=0)
+            
+            # 转为 Python标量，方便计算和返回
+            conf_val = confidence.item()
+            label_idx = pseudo_label.item()
+            
+            # 2. 更新该类别的平均置信度 (EMA)
+            # 公式: new_avg = m * old_avg + (1-m) * current_conf
+            old_avg = self.class_avg_conf[label_idx].item()
+            new_avg = self.momentum * old_avg + (1 - self.momentum) * conf_val
+            self.class_avg_conf[label_idx] = new_avg
+            
+            # 3. 计算动态阈值
+            # 逻辑: 如果当前类别的平均置信度(new_avg)比所有类别的最大值(max_avg)低，
+            # 说明这个类很难，我们要降低它的门槛。
+            max_avg_conf = self.class_avg_conf.max()
+            
+            # 归一化因子 (加一个极小值防止除零)
+            normalize_factor = max_avg_conf.item() + 1e-6
+            
+            # 核心公式: Threshold_c = Base * (Avg_c / Max_Avg_All)
+            dynamic_threshold = self.base_threshold * (new_avg / normalize_factor)
+            
+            # 截断: 确保阈值不低于下限，也不超过1.0
+            dynamic_threshold = max(dynamic_threshold, self.min_threshold)
+            dynamic_threshold = min(dynamic_threshold, 1.0)
+            
+            # 4. 判断是否选中
+            is_selected = conf_val >= dynamic_threshold
+            
+            return is_selected, label_idx, conf_val, dynamic_threshold
+
+    def reset(self):
+        """重置状态 (例如在切换新的Subject时使用)"""
+        self.class_avg_conf = torch.ones(self.num_classes) * self.base_threshold

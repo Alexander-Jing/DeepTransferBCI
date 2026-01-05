@@ -1410,6 +1410,32 @@ class DropMemoryBank_review_8:
             mean_entropy = 0.0
             std_entropy = 0.0
         return entropies, mean_entropy, std_entropy
+    
+    def compute_logits_entropy_median_iqr(self):
+        """
+        计算所有 memory item 的 logit 的香农熵，并返回所有熵的中位数和四分位距（IQR）。
+        Returns:
+            entropies: List[float]，每个样本的熵
+            median_entropy: float，所有样本熵的中位数
+            iqr_entropy: float，所有样本熵的四分位距
+        """
+        entropies = []
+        for class_list in self.data:
+            for item in class_list:
+                logits = item.logit
+                probs = F.softmax(logits, dim=-1)
+                entropy = -torch.sum(probs * torch.log(probs + 1e-12)).item()
+                entropies.append(entropy)
+        if entropies:
+            entropies_tensor = torch.tensor(entropies)
+            median_entropy = torch.median(entropies_tensor).item()
+            q1 = torch.quantile(entropies_tensor, 0.25).item()
+            q3 = torch.quantile(entropies_tensor, 0.75).item()
+            iqr_entropy = q3 - q1
+        else:
+            median_entropy = 0.0
+            iqr_entropy = 0.0
+        return entropies, median_entropy, iqr_entropy/2
 
 
 class DropMemoryBank_review_8_1:
