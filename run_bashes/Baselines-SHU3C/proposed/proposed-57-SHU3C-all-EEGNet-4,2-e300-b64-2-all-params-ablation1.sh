@@ -12,12 +12,12 @@ progarm_path="tl/proposed_method/ours_debug_m_cls_process_43.py"
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
 # Define the parameter values to iterate over
-confidence_thresholds=(0.60 0.65 0.70 0.75 0.80)
+confidence_thresholds=(0.65)
 thre_alpha=(1.0)
-loss_weight_type=(2.0 10.0 20.0)
+loss_weight_type=(10.0)
 
 # Base log path (without the trailing index)
-base_log_path="./logs/Baselines-WBCIC-SHU-3C-e300-b64/proposed/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-2-params/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p"
+base_log_path="./logs/Baselines-WBCIC-SHU-3C-e300-b64/proposed/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-2-params-ablation1/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p"
 
 # Initialize a counter for the parameter combinations
 index=1
@@ -68,7 +68,7 @@ for conf in "${confidence_thresholds[@]}"; do
             --weight_type "entropy" \
             --memory_capacity "64" \
             --thre_alpha "$ent" \
-            --loss_weight_type "buffer_sigmoid" \
+            --loss_weight_type "constant_1" \
             --gate_type "mean" \
             --buffer_selefction_type "dynamic_confidence" \
             --min_threshold "0.60" \

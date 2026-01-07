@@ -1165,7 +1165,7 @@ class DropMemoryBank_review_8:
         # Calculate fixed capacity per class (minimum 1)
         self.per_class_capacity = max(1, self.capacity // self.num_class)
         # Use list of lists for each class to enable custom management
-        self.data: list[list[MemoryItem]] = [[] for _ in range(self.num_class)]
+        self.data: list[list[MemoryItem_1]] = [[] for _ in range(self.num_class)]
         
         # Thresholds for memory management
         self.confidence_threshold = confidence_threshold
@@ -1446,7 +1446,7 @@ class DropMemoryBank_review_8_1:
         # Calculate fixed capacity per class (minimum 1)
         self.per_class_capacity = max(1, self.capacity // self.num_class)
         # Use list of lists for each class to enable custom management
-        self.data: list[list[MemoryItem]] = [[] for _ in range(self.num_class)]
+        self.data: list[list[MemoryItem_1]] = [[] for _ in range(self.num_class)]
         
         # Thresholds for memory management
         self.confidence_threshold = confidence_threshold
@@ -1691,6 +1691,453 @@ class DropMemoryBank_review_8_1:
             mean_entropy = 0.0
             std_entropy = 0.0
         return entropies, mean_entropy, std_entropy
+
+
+
+class HUS:
+    def __init__(self, capacity, num_class, confidence_threshold, uncertainty_threshold, type='UHUS', category_uniform=True, alpha=0.5):
+        # Initialize memory bank with fixed capacity per class
+        self.capacity = capacity
+        self.num_class = num_class
+        # Calculate fixed capacity per class (minimum 1)
+        self.per_class_capacity = max(1, self.capacity // self.num_class)
+        # Use list of lists for each class to enable custom management
+        self.data: list[list[MemoryItem_1]] = [[] for _ in range(self.num_class)]
+        
+        # Thresholds for memory management
+        self.confidence_threshold = confidence_threshold
+        self.uncertainty_threshold = uncertainty_threshold
+        self.type = type
+        self.category_uniform = category_uniform
+
+        # hyperparameters for time interval based management
+        # score = alpha * norm_interval + (1 - alpha) * norm_time
+        self.alpha = alpha
+
+    def get_occupancy(self):
+        """Return total number of stored instances across all classes"""
+        return sum(len(q) for q in self.data)
+
+    def per_class_dist(self):
+        """Return current sample count per class"""
+        return [len(q) for q in self.data]
+
+    def get_majority_classes(self):
+        """Return classes with maximum occupancy"""
+        class_counts = self.per_class_dist()
+        max_count = max(class_counts)
+        return [i for i, count in enumerate(class_counts) if count == max_count]
+
+    def get_target_index(self, data):
+        return random.randrange(0, len(data))
+
+    def get_non_empty_classes(self):
+        """Return all classes with at least one instance"""
+        return [i for i, q in enumerate(self.data) if len(q) > 0]
+
+    def add_age(self):
+        for class_list in self.data:
+            for item in class_list:
+                item.increase_age()
+        return
+
+    def add_instance(self, instance):
+        # Extract instance components
+        x, prediction, uncertainty, logit, time_stamp = (
+            instance['data'], 
+            instance['prediction'], 
+            instance['uncertainty'],
+            instance['logit'],
+            instance['time_stamp'],
+        )
+        
+        # Check for duplicate data across all classes
+        for cls_idx, cls_queue in enumerate(self.data):
+            if any(torch.equal(item.data, x) for item in cls_queue):
+                # print(f"Item already stored in memory bank for class {cls_idx}")
+                return True
+        
+        # Create new memory item
+        new_item = MemoryItem_1(data=x, uncertainty=uncertainty, logit=logit, time_stamp=time_stamp)
+        # add new item  
+        if self.get_occupancy() < self.capacity:
+            self.data[prediction].append(new_item)
+        else:
+            if self.remove_instance(instance):
+                self.data[prediction].append(new_item)
+
+    def remove_instance(self, instance):
+        if self.type == 'none':
+            pass
+        largest_indices = self.get_majority_classes()
+        if instance['prediction'] not in largest_indices:
+            class_index = random.choice(largest_indices)
+            self.data[class_index].pop(random.randint(0, len(self.data[class_index]) - 1))
+        else:
+            class_index = instance['prediction']
+            self.data[class_index].pop(random.randint(0, len(self.data[class_index]) - 1))
+
+        return True
+
+    
+    def get_memory(self):
+        """Retrieve all stored data, logits, and class indices (all samples per class)"""
+        tmp_data = []
+        tmp_logits = []
+        tmp_class = []
+        for cls_idx, cls_queue in enumerate(self.data):
+            for item in cls_queue:
+                tmp_data.append(item.data)
+                tmp_logits.append(item.logit)
+                tmp_class.append(cls_idx)
+        return tmp_data, tmp_logits, tmp_class
+    
+    def compute_logits_entropy(self):
+        """
+        计算所有 memory item 的 logit 的香农熵，并返回所有熵和均值。
+        Returns:
+            entropies: List[float]，每个样本的熵
+            mean_entropy: float，所有样本熵的均值
+        """
+        entropies = []
+        for class_list in self.data:
+            for item in class_list:
+                logits = item.logit
+                # 计算 softmax 概率
+                probs = F.softmax(logits, dim=-1)
+                # 计算香农熵
+                entropy = -torch.sum(probs * torch.log(probs + 1e-12)).item()
+                entropies.append(entropy)
+        if entropies:
+            mean_entropy = float(sum(entropies) / len(entropies))
+            std_entropy = float((sum((x - mean_entropy) ** 2 for x in entropies) / len(entropies)) ** 0.5)
+        else:
+            mean_entropy = 0.0
+            std_entropy = 0.0
+        return entropies, mean_entropy, std_entropy
+    
+    def compute_logits_entropy_median_iqr(self):
+        """
+        计算所有 memory item 的 logit 的香农熵，并返回所有熵的中位数和四分位距（IQR）。
+        Returns:
+            entropies: List[float]，每个样本的熵
+            median_entropy: float，所有样本熵的中位数
+            iqr_entropy: float，所有样本熵的四分位距
+        """
+        entropies = []
+        for class_list in self.data:
+            for item in class_list:
+                logits = item.logit
+                probs = F.softmax(logits, dim=-1)
+                entropy = -torch.sum(probs * torch.log(probs + 1e-12)).item()
+                entropies.append(entropy)
+        if entropies:
+            entropies_tensor = torch.tensor(entropies)
+            median_entropy = torch.median(entropies_tensor).item()
+            q1 = torch.quantile(entropies_tensor, 0.25).item()
+            q3 = torch.quantile(entropies_tensor, 0.75).item()
+            iqr_entropy = q3 - q1
+        else:
+            median_entropy = 0.0
+            iqr_entropy = 0.0
+        return entropies, median_entropy, iqr_entropy/2
+
+
+class CSTU:
+    def __init__(self, capacity, num_class, lambda_t=1.0, lambda_u=1.0):
+        self.capacity = capacity
+        self.num_class = num_class
+        # Calculate fixed capacity per class (minimum 1)
+        self.per_class_capacity = max(1, self.capacity // self.num_class)
+        self.lambda_t = lambda_t
+        self.lambda_u = lambda_u
+
+        self.data: list[list[MemoryItem_1]] = [[] for _ in range(self.num_class)]
+
+    def get_occupancy(self):
+        """Return total number of stored instances across all classes"""
+        return sum(len(q) for q in self.data)
+
+    def per_class_dist(self):
+        """Return current sample count per class"""
+        return [len(q) for q in self.data]
+
+    def add_instance(self, instance):
+
+        # Extract instance components
+        x, prediction, uncertainty, logit, time_stamp = (
+            instance['data'], 
+            instance['prediction'], 
+            instance['uncertainty'],
+            instance['logit'],
+            instance['time_stamp'],
+        )
+        
+        # Check for duplicate data across all classes
+        for cls_idx, cls_queue in enumerate(self.data):
+            if any(torch.equal(item.data, x) for item in cls_queue):
+                # print(f"Item already stored in memory bank for class {cls_idx}")
+                return True
+        
+        # Create new memory item
+        new_item = MemoryItem_1(data=x, uncertainty=uncertainty, logit=logit, time_stamp=time_stamp, age=0)
+        
+        new_score = self.heuristic_score(0, logit)
+        if self.remove_instance(prediction, new_score):
+            self.data[prediction].append(new_item)
+        self.add_age()
+
+    def remove_instance(self, cls, score):
+        class_list = self.data[cls]
+        class_occupied = len(class_list)
+        all_occupancy = self.get_occupancy()
+        if class_occupied < self.per_class_capacity:
+            if all_occupancy < self.capacity:
+                return True
+            else:
+                majority_classes = self.get_majority_classes()
+                return self.remove_from_classes(majority_classes, score)
+        else:
+            return self.remove_from_classes([cls], score)
+
+    def remove_from_classes(self, classes: 'list[int]', score_base):
+        max_class = None
+        max_index = None
+        max_score = None
+        for cls in classes:
+            for idx, item in enumerate(self.data[cls]):
+                logit = item.logit
+                age = item.age
+                score = self.heuristic_score(age=age, logit=logit)
+                if max_score is None or score >= max_score:
+                    max_score = score
+                    max_index = idx
+                    max_class = cls
+
+        if max_class is not None:
+            if max_score > score_base:
+                self.data[max_class].pop(max_index)
+                return True
+            else:
+                return False
+        else:
+            return True
+
+    def get_majority_classes(self):
+        per_class_dist = self.per_class_dist()
+        max_occupied = max(per_class_dist)
+        classes = []
+        for i, occupied in enumerate(per_class_dist):
+            if occupied == max_occupied:
+                classes.append(i)
+
+        return classes
+
+    def heuristic_score(self, age, logit):
+        # 计算 softmax 概率
+        probs = F.softmax(logit, dim=-1)
+        # 计算香农熵
+        entropy = -torch.sum(probs * torch.log(probs + 1e-12)).item()
+        return self.lambda_t * 1 / (1 + math.exp(-age / self.capacity)) + self.lambda_u * entropy / math.log(self.num_class)
+
+    def add_age(self):
+        for class_list in self.data:
+            for item in class_list:
+                item.increase_age()
+        return
+
+    def get_memory(self):
+        """Retrieve all stored data, logits, and class indices (all samples per class)"""
+        tmp_data = []
+        tmp_logits = []
+        tmp_class = []
+        for cls_idx, cls_queue in enumerate(self.data):
+            for item in cls_queue:
+                tmp_data.append(item.data)
+                tmp_logits.append(item.logit)
+                tmp_class.append(cls_idx)
+        return tmp_data, tmp_logits, tmp_class
+    
+    
+    def compute_logits_entropy(self):
+        """
+        计算所有 memory item 的 logit 的香农熵，并返回所有熵和均值。
+        Returns:
+            entropies: List[float]，每个样本的熵
+            mean_entropy: float，所有样本熵的均值
+        """
+        entropies = []
+        for class_list in self.data:
+            for item in class_list:
+                logits = item.logit
+                # 计算 softmax 概率
+                probs = F.softmax(logits, dim=-1)
+                # 计算香农熵
+                entropy = -torch.sum(probs * torch.log(probs + 1e-12)).item()
+                entropies.append(entropy)
+        if entropies:
+            mean_entropy = float(sum(entropies) / len(entropies))
+            std_entropy = float((sum((x - mean_entropy) ** 2 for x in entropies) / len(entropies)) ** 0.5)
+        else:
+            mean_entropy = 0.0
+            std_entropy = 0.0
+        return entropies, mean_entropy, std_entropy
+    
+    def compute_logits_entropy_median_iqr(self):
+        """
+        计算所有 memory item 的 logit 的香农熵，并返回所有熵的中位数和四分位距（IQR）。
+        Returns:
+            entropies: List[float]，每个样本的熵
+            median_entropy: float，所有样本熵的中位数
+            iqr_entropy: float，所有样本熵的四分位距
+        """
+        entropies = []
+        for class_list in self.data:
+            for item in class_list:
+                logits = item.logit
+                probs = F.softmax(logits, dim=-1)
+                entropy = -torch.sum(probs * torch.log(probs + 1e-12)).item()
+                entropies.append(entropy)
+        if entropies:
+            entropies_tensor = torch.tensor(entropies)
+            median_entropy = torch.median(entropies_tensor).item()
+            q1 = torch.quantile(entropies_tensor, 0.25).item()
+            q3 = torch.quantile(entropies_tensor, 0.75).item()
+            iqr_entropy = q3 - q1
+        else:
+            median_entropy = 0.0
+            iqr_entropy = 0.0
+        return entropies, median_entropy, iqr_entropy/2
+
+class FIFO:
+    def __init__(self, capacity, num_class, confidence_threshold, uncertainty_threshold, type='UHUS', category_uniform=True, alpha=0.5):
+        # Initialize memory bank with fixed capacity per class
+        self.capacity = capacity
+        self.num_class = num_class
+        # Calculate fixed capacity per class (minimum 1)
+        self.per_class_capacity = max(1, self.capacity // self.num_class)
+        # Use deque for each class to enable automatic FIFO behavior
+        self.data = [deque(maxlen=self.per_class_capacity) 
+                     for _ in range(self.num_class)]
+        
+        # Thresholds for memory management
+        self.confidence_threshold = confidence_threshold
+        self.uncertainty_threshold = uncertainty_threshold
+        self.type = type
+        self.category_uniform = category_uniform
+
+
+    def get_occupancy(self):
+        """Return total number of stored instances across all classes"""
+        return sum(len(q) for q in self.data)
+
+    def per_class_dist(self):
+        """Return current sample count per class"""
+        return [len(q) for q in self.data]
+
+    def get_majority_classes(self):
+        """Return classes with maximum occupancy"""
+        class_counts = self.per_class_dist()
+        max_count = max(class_counts)
+        return [i for i, count in enumerate(class_counts) if count == max_count]
+
+    def get_target_index(self, data):
+        return random.randrange(0, len(data))
+
+    def get_non_empty_classes(self):
+        """Return all classes with at least one instance"""
+        return [i for i, q in enumerate(self.data) if len(q) > 0]
+
+    def add_age(self):
+        for class_list in self.data:
+            for item in class_list:
+                item.increase_age()
+        return
+
+    def add_instance(self, instance):
+        # Extract instance components
+        x, prediction, uncertainty, logit, time_stamp = (
+            instance['data'], 
+            instance['prediction'], 
+            instance['uncertainty'],
+            instance['logit'],
+            instance['time_stamp'],
+        )
+        
+        # Check for duplicate data across all classes
+        for cls_idx, cls_queue in enumerate(self.data):
+            if any(torch.equal(item.data, x) for item in cls_queue):
+                # print(f"Item already stored in memory bank for class {cls_idx}")
+                return True
+        
+        # Create new memory item
+        new_item = MemoryItem_1(data=x, uncertainty=uncertainty, logit=logit, time_stamp=time_stamp)
+        # add new item  
+        self.data[prediction].append(new_item)
+        
+
+    def get_memory(self):
+        """Retrieve all stored data, logits, and class indices (all samples per class)"""
+        tmp_data = []
+        tmp_logits = []
+        tmp_class = []
+        for cls_idx, cls_queue in enumerate(self.data):
+            for item in cls_queue:
+                tmp_data.append(item.data)
+                tmp_logits.append(item.logit)
+                tmp_class.append(cls_idx)
+        return tmp_data, tmp_logits, tmp_class
+    
+    def compute_logits_entropy(self):
+        """
+        计算所有 memory item 的 logit 的香农熵，并返回所有熵和均值。
+        Returns:
+            entropies: List[float]，每个样本的熵
+            mean_entropy: float，所有样本熵的均值
+        """
+        entropies = []
+        for class_list in self.data:
+            for item in class_list:
+                logits = item.logit
+                # 计算 softmax 概率
+                probs = F.softmax(logits, dim=-1)
+                # 计算香农熵
+                entropy = -torch.sum(probs * torch.log(probs + 1e-12)).item()
+                entropies.append(entropy)
+        if entropies:
+            mean_entropy = float(sum(entropies) / len(entropies))
+            std_entropy = float((sum((x - mean_entropy) ** 2 for x in entropies) / len(entropies)) ** 0.5)
+        else:
+            mean_entropy = 0.0
+            std_entropy = 0.0
+        return entropies, mean_entropy, std_entropy
+    
+    def compute_logits_entropy_median_iqr(self):
+        """
+        计算所有 memory item 的 logit 的香农熵，并返回所有熵的中位数和四分位距（IQR）。
+        Returns:
+            entropies: List[float]，每个样本的熵
+            median_entropy: float，所有样本熵的中位数
+            iqr_entropy: float，所有样本熵的四分位距
+        """
+        entropies = []
+        for class_list in self.data:
+            for item in class_list:
+                logits = item.logit
+                probs = F.softmax(logits, dim=-1)
+                entropy = -torch.sum(probs * torch.log(probs + 1e-12)).item()
+                entropies.append(entropy)
+        if entropies:
+            entropies_tensor = torch.tensor(entropies)
+            median_entropy = torch.median(entropies_tensor).item()
+            q1 = torch.quantile(entropies_tensor, 0.25).item()
+            q3 = torch.quantile(entropies_tensor, 0.75).item()
+            iqr_entropy = q3 - q1
+        else:
+            median_entropy = 0.0
+            iqr_entropy = 0.0
+        return entropies, median_entropy, iqr_entropy/2
+
 
 # the buffer for storing the batch based data
 class OnlineBuffer:

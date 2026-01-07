@@ -27,7 +27,7 @@ from tl.utils.loss_proposed_1 import MemorySoftplusEnergyAlignment, CE_MDR, Pres
             ConsSamples_selection_two_stage_weighted_4_1_double, ConsSamples_selection_two_stage_weighted_4_1_double_1, CE_KL_review, CE_KL_review_weighted, CE_KL_review_weighted_1, CE_KL_review_weighted_2, CE_KL_review_weighted_3, CE_KL_review_weighted_4, CE_KL_review_weighted_5, ConsSamples_selection_two_stage_weighted_4_1_review, \
             ConsSamples_selection_two_stage_weighted_4_1_review_1, ConsSamples_selection_two_stage_weighted_4_1_review_2, ConsSamples_selection_two_stage_weighted_4_1_review_3, CE_KL_review_weighted_3_1, ConsSamples_selection_two_stage_weighted_4_1_review_4, ConsSamples_selection_two_stage_weighted_4_1_review_4_1, CE_KL_review_weighted_3_2
 from tl.utils.loss_proposed_1_1 import CE_KL_review_3, CE_KL_review_weighted_6, CE_KL_review_weighted_7, ConsSamples_selection_two_stage_weighted_4_1_review_4_2, CE_KL_review_weighted_8, ConsSamples_selection_two_stage_weighted_4_1_review_4_3, CE_KL_review_weighted_9, ConsSamples_selection_two_stage_weighted_4_1_review_4_4, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_1, \
-     ConsSamples_selection_two_stage_weighted_4_1_review_4_4_2, CE_KL_review_weighted_10, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_3, ConsSamples_selection_two_stage_weighted_4_1_modified, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4
+     ConsSamples_selection_two_stage_weighted_4_1_review_4_4_2, CE_KL_review_weighted_10, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_3, ConsSamples_selection_two_stage_weighted_4_1_modified, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4, ConsSamples_selection_two_stage_weighted_4_1_modified_1
 from tl.utils.calibration_proposed import CalibratedPseudoLabels, DynamicThresholdSelector
 from tl.utils.optimizer_proposed import build_optimizer
 from tl.utils.network import backbone_net
@@ -586,7 +586,14 @@ class proposed_TTA(nn.Module):
                         elif self.return_type == 'y':
                             preds_of_data = self.model(sup_data)
                         
-                        if self.memory.get_occupancy() >= int(self.capacity/2):
+                        if self.EnergyAlignment.warm_up in ['capacity']:
+                            update_flag = int(self.capacity/2)
+                        elif self.EnergyAlignment.warm_up in ['batch_size_online']:
+                            update_flag = self.batch_size_online
+                        else:
+                            update_flag = 0
+
+                        if self.memory.get_occupancy() >= update_flag:
 
                             if self.losses[0].strip() in ["CE_KL_review"]: 
                                 loss = loss_fn(preds_of_data, preds_of_data_review, review_data_class)
@@ -620,7 +627,7 @@ class proposed_TTA(nn.Module):
                         elif self.return_type == 'y':
                             preds_of_data_1 = self.model(sup_data)
                         
-                        if self.memory.get_occupancy() >= int(self.capacity/2):
+                        if self.memory.get_occupancy() >= update_flag:
                             if self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted","ConsSamples_selection_two_stage_weighted_1","ConsSamples_selection_two_stage_weighted_2","ConsSamples_selection_two_stage_weighted_3","ConsSamples_selection_two_stage_weighted_4","ConsSamples_selection_two_stage_weighted_4_1"]: 
                                 loss_1 = loss_fn_1(preds_of_data_1, preds_of_data.clone().detach())
                             elif self.losses[1].strip() in ["ConsSamples_selection_two_stage_weighted_4_1_double"]:

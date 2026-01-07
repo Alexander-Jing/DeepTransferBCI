@@ -1488,6 +1488,8 @@ class ConsSamples_selection_two_stage_weighted_4_1_review_4_4_3(nn.Module):
                 weight_ = 1.0
             else:
                 weight_ = 0.0
+        elif self.loss_weight_type in ['constant_0']:
+            weight_ = 0.0
         else:
             weight_ = 1.0
 
@@ -1502,6 +1504,74 @@ class ConsSamples_selection_two_stage_weighted_4_1_review_4_4_3(nn.Module):
 
         return loss_sum
     
+
+class ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4(nn.Module):
+    # special version for two stage model updating
+    def __init__(self, ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, entropy_threshold=0.5, ratio_reivew=0.25, weight_type='entropy_energy', thre_alpha=1.0, loss_weight_type='sigmoid',gate_type='mean'):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+        self.scale = scale
+        self.entropy_threshold = entropy_threshold  # Threshold for entropy_avg
+        self.ratio_review = ratio_reivew
+        self.weight_type = weight_type
+        self.thre_alpha = thre_alpha
+        self.loss_weight_type = loss_weight_type
+        self.gate_type = gate_type
+
+    def forward(self, logits, logits_initial, review_data_logits, current_threshold, current_threshold_std):
+        
+        # 计算当前mini-batch的均值entropy
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        if self.gate_type in ['mean']:
+            entropy_avg = torch.mean(entropy_normalized)
+        elif self.gate_type in ['median']:
+            entropy_avg = torch.median(entropy_normalized)
+
+        # 归一化当前的阈值
+        C = logits.size(1)  # categories
+        C_tensor = torch.tensor(C, dtype=torch.float, device=logits.device)
+        max_entropy = torch.log(C_tensor)
+        _threshold = current_threshold / max_entropy + self.thre_alpha * current_threshold_std / max_entropy
+
+        # 权重设置
+        if self.loss_weight_type in ['sigmoid']:    
+            # Transform input for weight calculation
+            transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+            # Constrain output to [0,1] using Sigmoid
+            weight_ = torch.sigmoid(-transformed_input / self.temp)
+        elif self.loss_weight_type in ['linear']:
+            weight_ = 1.0 - entropy_avg
+        elif self.loss_weight_type in ['buffer_sigmoid']:
+            weight_ = torch.sigmoid(-(entropy_avg - current_threshold/max_entropy)*self.scale / self.temp)
+        elif self.loss_weight_type in ['gate']:
+            if entropy_avg < _threshold:
+                weight_ = 1.0
+            else:
+                weight_ = 0.0
+        elif self.loss_weight_type in ['constant_0']:
+            weight_ = 0.0
+        else:
+            weight_ = 1.0
+
+        
+        if self.loss_weight_type in ['no_buffer']:
+            cons_loss = contrastive_loss_samples_selection_modified(logits, ratio=self.ratio, temperature=self.temp, weight_type=self.weight_type)
+        else:
+            # 计算对比损失函数
+            if not review_data_logits.shape[0] == 0:
+                cons_loss = contrastive_loss_samples_selection_review_2_2(logits, review_data_logits, ratio=self.ratio, ratio_review=self.ratio_review, temperature=self.temp, weight_type=self.weight_type)
+            else:
+                cons_loss = contrastive_loss_samples_selection_modified(logits, ratio=self.ratio, temperature=self.temp, weight_type=self.weight_type)
+
+        # Compute final loss
+        loss_sum = weight_ * cons_loss
+
+        return loss_sum
 
 class ConsSamples_selection_two_stage_weighted_4_1_modified(nn.Module):
     # special version for two stage model updating
@@ -1528,6 +1598,41 @@ class ConsSamples_selection_two_stage_weighted_4_1_modified(nn.Module):
         
         # 通过 Sigmoid 约束输出到 [0,1]
         weight_ = torch.sigmoid(-transformed_input / self.temp)
+
+        loss_sum = self.lambda_3 * weight_ * cons_loss
+        
+        return  loss_sum
+    
+class ConsSamples_selection_two_stage_weighted_4_1_modified_1(nn.Module):
+    # special version for two stage model updating
+    def __init__(self,  ratio=0.5, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, weight_type='entropy_energy', loss_weight_type='sigmoid'):
+        super().__init__()
+        self.temp = temp
+        self.softplus = nn.Softplus()
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.ratio = ratio  # Ratio of samples to select for entropy++lcs
+        self.scale = scale
+        self.weight_type = weight_type
+        self.loss_weight_type = loss_weight_type
+
+    def forward(self, logits, logits_initial):
+        
+        batch_size = logits_initial.size(0)
+        entropy_normalized = _entropy_samples_normalized(logits_initial)
+        entropy_avg = torch.mean(entropy_normalized)
+        
+        cons_loss = contrastive_loss_samples_selection_modified(logits, ratio=self.ratio, temperature=self.temp, weight_type=self.weight_type)
+
+        if self.loss_weight_type in ['sigmoid']:
+            transformed_input = self.scale * (2 * entropy_avg - 1)  # map to [-scale, scale]
+            # 通过 Sigmoid 约束输出到 [0,1]
+            weight_ = torch.sigmoid(-transformed_input / self.temp)
+        elif self.loss_weight_type in ['constant_0']:
+            weight_ = 0.0
+        else:
+            weight_ = 1.0
 
         loss_sum = self.lambda_3 * weight_ * cons_loss
         

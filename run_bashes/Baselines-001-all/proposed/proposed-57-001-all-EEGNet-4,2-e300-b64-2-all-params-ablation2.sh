@@ -17,7 +17,7 @@ thre_alpha=(1.0)
 loss_weight_type=(20.0)
 
 # Base log path (without the trailing index)
-base_log_path="./logs/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-2-params-ablation1/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p"
+base_log_path="./logs/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-2-params-ablation2/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p"
 
 # Initialize a counter for the parameter combinations
 index=1
@@ -68,7 +68,7 @@ for conf in "${confidence_thresholds[@]}"; do
             --weight_type "entropy" \
             --memory_capacity "64" \
             --thre_alpha "$ent" \
-            --loss_weight_type "constant_1" \
+            --loss_weight_type "constant_0" \
             --gate_type "mean" \
             --buffer_selefction_type "dynamic_confidence" \
             --min_threshold "0.40" \

@@ -12,12 +12,12 @@ progarm_path="tl/proposed_method/ours_debug_m_cls_process_43.py"
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
 # Define the parameter values to iterate over
-confidence_thresholds=(0.45)
+confidence_thresholds=(0.60)
 thre_alpha=(1.0)
 loss_weight_type=(20.0)
 
 # Base log path (without the trailing index)
-base_log_path="./logs/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-2-params-ablation1/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p"
+base_log_path="./logs/Baselines-004-test-e300-b64/proposed/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-2-params-ablation1/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p"
 
 # Initialize a counter for the parameter combinations
 index=1
@@ -34,7 +34,7 @@ for conf in "${confidence_thresholds[@]}"; do
 
           # Execute the Python script with the current parameters
           python3 $progarm_path \
-            --dataset_name "BNCI2014001-4-all" \
+            --dataset_name "BNCI2014_004-test" \
             --data_save "True" \
             --data_path "./data/" \
             --data_path_MI "None" \
@@ -52,7 +52,7 @@ for conf in "${confidence_thresholds[@]}"; do
             --backbone "EEGNet-4,2" \
             --param_runs "./runs_debug/" \
             --use_BN "False" \
-            --stride "8" \
+            --stride "1" \
             --batch_size_online "8" \
             --loss_func "CE_KL_review_weighted_10,ConsSamples_selection_two_stage_weighted_4_1_review_4_4_3" \
             --selection_ratio "0.75" \
@@ -71,7 +71,7 @@ for conf in "${confidence_thresholds[@]}"; do
             --loss_weight_type "constant_1" \
             --gate_type "mean" \
             --buffer_selefction_type "dynamic_confidence" \
-            --min_threshold "0.40" \
+            --min_threshold "0.60" \
           # Increment the index for the next combination
           ((index++))
           
