@@ -25,7 +25,7 @@
             "name": "Python: TTA-BCNI2014001-4-all-proposed",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_43.py",
+            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_45.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -38,7 +38,7 @@
                 "--finetune", "False",
                 "--momentum", "False",
                 "--momentum_param", "0.5",
-                "--gpu_idx", "0",
+                "--gpu_idx", "1",
                 "--align", "True",
                 "--batch_size", "64",
                 "--lr", "0.001",
@@ -55,20 +55,21 @@
                 "--selection_ratio_review", "0.25",
                 "--updating_type", "entropy_review",
                 "--mt", "0.1",
-                "--loss_weights", "1.0, 1.0, 1.0",
+                "--loss_weights", "0.0, 0.0, 1.0",
                 "--scale", "20.0",
                 "--confidence_threshold", "0.45",
                 "--entropy_threshold", "0.40",
                 "--calibrate_probs", "False",
-                "--memory_type", "FIFO",
+                "--memory_type", "DropMemoryBank_review_8",
                 "--memory_review", "get_memory",
                 "--weight_type", "entropy",
                 "--memory_capacity", "64",
                 "--thre_alpha", "0.5",
-                "--loss_weight_type", "buffer_sigmoid",
+                "--loss_weight_type", "buffer_only",
                 "--gate_type", "mean",
                 "--buffer_selefction_type", "dynamic_confidence",
                 "--min_threshold", "0.4",
+                "--warm_up", "capacity",
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
@@ -79,7 +80,7 @@
             "name": "Python: TTA-WBCIC-SHU-3C-proposed",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_39.py",
+            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_45.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
