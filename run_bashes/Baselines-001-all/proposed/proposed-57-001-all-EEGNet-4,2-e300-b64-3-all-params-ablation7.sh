@@ -56,7 +56,7 @@ for conf in "${confidence_thresholds[@]}"; do
             --batch_size_online "8" \
             --loss_func "CE_KL_review_weighted_10,ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4_feas" \
             --selection_ratio "0.75" \
-            --selection_ratio_review "0.25" \
+            --selection_ratio_review "0.5" \
             --mt "0.9" \
             --updating_type "entropy_review" \
             --loss_weights "1.0, 1.0, 1.0" \

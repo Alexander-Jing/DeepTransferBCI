@@ -25,7 +25,7 @@
             "name": "Python: TTA-BCNI2014001-4-all-proposed",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_45.py",
+            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_48.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -38,7 +38,7 @@
                 "--finetune", "False",
                 "--momentum", "False",
                 "--momentum_param", "0.5",
-                "--gpu_idx", "1",
+                "--gpu_idx", "0",
                 "--align", "True",
                 "--batch_size", "64",
                 "--lr", "0.001",
@@ -49,14 +49,15 @@
                 "--batch_size_online", "8",
                 "--stride", "8",
                 "--use_BN", "False",
-                "--loss_func", "CE_KL_review_weighted_10,ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4",
+                //"--loss_func", "CE_KL_review_weighted_10,ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4",
+                "--loss_func", "CE_KL_review_weighted_10_constrastive_fea",
                 //"--presudo_src", "False",
                 "--selection_ratio", "0.75",
-                "--selection_ratio_review", "0.25",
+                "--selection_ratio_review", "0.50",
                 "--updating_type", "entropy_review",
                 "--mt", "0.1",
-                "--loss_weights", "0.0, 0.0, 1.0",
-                "--scale", "20.0",
+                "--loss_weights", "1.0, 1.0, 1.0",
+                "--scale", "10.0",
                 "--confidence_threshold", "0.45",
                 "--entropy_threshold", "0.40",
                 "--calibrate_probs", "False",
@@ -65,11 +66,13 @@
                 "--weight_type", "entropy",
                 "--memory_capacity", "64",
                 "--thre_alpha", "0.5",
-                "--loss_weight_type", "buffer_only",
-                "--gate_type", "mean",
+                "--loss_weight_type", "constant_1",
+                "--gate_type", "zero",
                 "--buffer_selefction_type", "dynamic_confidence",
                 "--min_threshold", "0.4",
-                "--warm_up", "capacity",
+                "--temp", "2.0",
+                "--two_stage", "False",
+                //"--warm_up", "capacity",
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
@@ -121,6 +124,38 @@
                 "--memory_capacity", "64",
                 "--thre_alpha", "2.0",
 
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: TTA-BCNI2014001-4-all-other_methods-for debug",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tl/ttime_debug_m_cls_process.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "BNCI2014001-4-all",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--data_path_MI", "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/",
+                "--log_path", "./logs/Baselines-001-test-e300-b64-debugs/debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/",
+                "--use_pretrained_model", "True",
+                "--finetune", "False",
+                "--momentum", "False",
+                "--momentum_param", "0.5",
+                "--gpu_idx", "0",
+                "--align", "True",
+                "--batch_size", "64",
+                "--lr", "0.001",
+                "--lr_online", "0.001",
+                "--epoch", "300",
+                "--backbone", "EEGNet-4,2",
+                "--param_runs", "./runs_debug/",
+                "--batch_size_online", "8",
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"

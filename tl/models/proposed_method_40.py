@@ -27,7 +27,7 @@ from tl.utils.loss_proposed_1 import MemorySoftplusEnergyAlignment, CE_MDR, Pres
             ConsSamples_selection_two_stage_weighted_4_1_double, ConsSamples_selection_two_stage_weighted_4_1_double_1, CE_KL_review, CE_KL_review_weighted, CE_KL_review_weighted_1, CE_KL_review_weighted_2, CE_KL_review_weighted_3, CE_KL_review_weighted_4, CE_KL_review_weighted_5, ConsSamples_selection_two_stage_weighted_4_1_review, \
             ConsSamples_selection_two_stage_weighted_4_1_review_1, ConsSamples_selection_two_stage_weighted_4_1_review_2, ConsSamples_selection_two_stage_weighted_4_1_review_3, CE_KL_review_weighted_3_1, ConsSamples_selection_two_stage_weighted_4_1_review_4, ConsSamples_selection_two_stage_weighted_4_1_review_4_1, CE_KL_review_weighted_3_2
 from tl.utils.loss_proposed_1_1 import CE_KL_review_3, CE_KL_review_weighted_6, CE_KL_review_weighted_7, ConsSamples_selection_two_stage_weighted_4_1_review_4_2, CE_KL_review_weighted_8, ConsSamples_selection_two_stage_weighted_4_1_review_4_3, CE_KL_review_weighted_9, ConsSamples_selection_two_stage_weighted_4_1_review_4_4, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_1, \
-     ConsSamples_selection_two_stage_weighted_4_1_review_4_4_2, CE_KL_review_weighted_10, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_3, ConsSamples_selection_two_stage_weighted_4_1_modified, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4_feas, ConsSamples_selection_two_stage_weighted_4_1_modified_feas, CE_KL_review_weighted_10_constrastive
+     ConsSamples_selection_two_stage_weighted_4_1_review_4_4_2, CE_KL_review_weighted_10, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_3, ConsSamples_selection_two_stage_weighted_4_1_modified, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4_feas, ConsSamples_selection_two_stage_weighted_4_1_modified_feas, CE_KL_review_weighted_10_constrastive, ConsSamples_selection_two_stage_weighted_4_1_modified_2
 from tl.utils.calibration_proposed import CalibratedPseudoLabels, DynamicThresholdSelector
 from tl.utils.optimizer_proposed import build_optimizer
 from tl.utils.network import backbone_net
@@ -388,7 +388,7 @@ class proposed_TTA(nn.Module):
                 if self.losses[1].strip() in ['ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4_feas']:  
                     loss_fn_1_0 = loss_prepare(loss_name="ConsSamples_selection_two_stage_weighted_4_1_modified_feas", EnergyAlignment=self.EnergyAlignment)
                 else:
-                    loss_fn_1_0 = loss_prepare(loss_name="ConsSamples_selection_two_stage_weighted_4_1_modified", EnergyAlignment=self.EnergyAlignment)
+                    loss_fn_1_0 = loss_prepare(loss_name="ConsSamples_selection_two_stage_weighted_4_1_modified_2", EnergyAlignment=self.EnergyAlignment)
 
         # prepare the data from current batch and memory
         if not self.paras_optim['two_stage']:
@@ -1125,6 +1125,8 @@ def loss_prepare(loss_name, EnergyAlignment):
         return ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, weight_type=EnergyAlignment.weight_type, ratio_reivew=EnergyAlignment.ratio_review, thre_alpha=EnergyAlignment.thre_alpha, loss_weight_type=EnergyAlignment.loss_weight_type, gate_type=EnergyAlignment.gate_type)
     elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_modified':
         return ConsSamples_selection_two_stage_weighted_4_1_modified(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, weight_type='entropy_energy')
+    elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_modified_2':
+        return ConsSamples_selection_two_stage_weighted_4_1_modified_2(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, weight_type='entropy_energy')
     elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4_feas':
         return ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4_feas(ratio=EnergyAlignment.ratio, lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, weight_type=EnergyAlignment.weight_type, ratio_reivew=EnergyAlignment.ratio_review, thre_alpha=EnergyAlignment.thre_alpha, loss_weight_type=EnergyAlignment.loss_weight_type, gate_type=EnergyAlignment.gate_type)
     elif loss_name == 'ConsSamples_selection_two_stage_weighted_4_1_modified_feas':

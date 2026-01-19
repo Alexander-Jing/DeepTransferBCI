@@ -3,6 +3,7 @@ from torch.utils.data import DataLoader
 from utils import memory, memory_rotta
 from utils.loss_functions import *
 from utils.sam_optimizer import SAM, sam_collect_params
+import time
 
 class SoTTA(nn.Module):
 
@@ -109,7 +110,7 @@ class SoTTA(nn.Module):
         # if it is the adaptation interval, it will try to update the model 
         # following the original paper of sotta, the adaptation interval is the same as the memory capacity
         if current_num_sample % args.update_every_x == 0: 
-            
+            update_start_time = time.time()
             # setup models
             self.net.train()
 
@@ -133,7 +134,8 @@ class SoTTA(nn.Module):
             for e in range(self.steps):
                 for batch_idx, (feats,) in enumerate(data_loader):
                     self.step(loss_fn=entropy_loss, feats=feats)
-
+            update_end_time = time.time()
+            print("Adaptation time: {:.3f} seconds.".format(update_end_time - update_start_time))
         return outputs
 
     def step(self, loss_fn, feats=None):

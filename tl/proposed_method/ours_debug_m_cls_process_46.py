@@ -6,44 +6,55 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
+import csv
 
 from tl.utils.utils import str2bool
-from utils.network import backbone_net
-from utils.LogRecord import LogRecord
-from utils.dataloader import read_mi_combine_tar
-from utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist
-from utils.alg_utils import EA, EA_online
+from tl.utils.utils import float_list
+from tl.utils.network import backbone_net
+from tl.utils.LogRecord import LogRecord
+from tl.utils.dataloader import read_mi_combine_tar
+from tl.utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist, build_optimizer, save_features_predictions
+from tl.utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
+from tl.models.proposed_method_40 import proposed_TTA
 from sklearn.metrics import roc_auc_score, accuracy_score
-from utils.loss import Entropy
-from models.sam import SAM
-import time
 
 import gc
 import sys
 import time
+from box import Box
+from collections import OrderedDict
 
-# This is the implementation of SAR from paper:
-# Niu S, Wu J, Zhang Y, et al. Towards stable test-time adaptation in dynamic wild world[J]. arXiv preprint arXiv:2302.12400, 2023.
-# @Time    : 2023/07/07
-# @Author  : Siyang Li
-# @File    : sar.py
-# from github https://github.com/sylyoung/DeepTransferEEG/tree/main
+# This is the implementation of the proposed method for experiments
+# @Time    : 2025/06/10
+# @Author  : Yitao Jing
+# @File    : ours_debug_m_cls_process_1.py
+# from github 
 
-def SAR(loader, model, args, balanced=True):
-    # SAR
+def motta_func(loader, model, args, balanced=True):
+    # Tent
+
+    if balanced == False and args.data_name == 'BNCI2014001-4':
+        print('ERROR, imbalanced multi-class not implemented')
+        sys.exit(0)
 
     y_true = []
     y_pred = []
-
-    base_optimizer = torch.optim.Adam  # define an optimizer for the "sharpness-aware" update
-    optimizer = SAM(model.parameters(), base_optimizer, lr=args.lr_online)
+    feas = []
 
     # initialize test reference matrix for Incremental EA
     if args.align:
         R = 0
 
     iter_test = iter(loader)
+
+    proposed_TTA_model = proposed_TTA(model=model, paras_optim=args.paras_optim, capacity=args.capacity,num_classes=args.class_num, bn_alpha=args.bn_alpha, temp_factor=1, 
+                        update_frequency=args.update_frequency, update_counter=args.update_counter, EnergyAlignment = args.EnergyAlignment,
+                        confidence_threshold=args.confidence_threshold, uncertainty_threshold=args.uncertainty_threshold, prune_ratio=args.prune_ratio, pruning_strategy=args.pruning_strategy,
+                        pruning_module=args.pruning_module, metric_name=args.metric_name, arch=args.backbone, use_BN=args.use_BN,
+                        dataset=args.data_name, enable_robustBN=False, loss_name=args.loss_name, paras_loss={"lambda_info": 0.}, updating_type=args.updating_type, batch_size_online=args.test_batch, steps=args.steps, mt=args.mt, calibrate_probs=args.calibrate_probs, 
+                        memory_type=args.memory_type, memory_review=args.memory_review)
+    proposed_TTA_model.cuda()
 
     # loop through test data stream one by one
     for i in range(len(loader)):
@@ -57,77 +68,57 @@ def SAR(loader, model, args, balanced=True):
         # accumulate test data
         if i == 0:
             data_cum = inputs.float().cpu()
-            labels_cum = labels.float().cpu()
         else:
             data_cum = torch.cat((data_cum, inputs.float().cpu()), 0)
-            labels_cum = torch.cat((labels_cum, labels.float().cpu()), 0)
 
         # Incremental EA
         if args.align:
+            start_time = time.time()
+
+            if i == 0:
+                sample_test = data_cum.reshape(args.chn, args.time_sample_num)
+                sample_test_origin = data_cum.reshape(args.chn, args.time_sample_num)
+            else:
+                sample_test = data_cum[i].reshape(args.chn, args.time_sample_num)
+                sample_test_origin = data_cum[i].reshape(args.chn, args.time_sample_num)
             # update reference matrix
-            R = EA_online(inputs.reshape(args.chn, args.time_sample_num), R, i + 1)
+            R = EA_online(sample_test, R, i)
+
             sqrtRefEA = fractional_matrix_power(R, -0.5)
             # transform current test sample
-            inputs = np.dot(sqrtRefEA, inputs)
-            inputs = inputs.reshape(1, 1, args.chn, args.time_sample_num)
+            sample_test = np.dot(sqrtRefEA, sample_test)
+
+            EA_time = time.time()
+            if args.calc_time:
+                print('sample ', str(i), ', pre-inference IEA finished time in ms:', np.round((EA_time - start_time) * 1000, 3))
+            sample_test = sample_test.reshape(1, 1, args.chn, args.time_sample_num)
+            sample_test_origin = sample_test_origin.reshape(1, 1, args.chn, args.time_sample_num)
         else:
-            inputs = data_cum[i].numpy()
-            inputs = inputs.reshape(1, 1, inputs.shape[1], inputs.shape[2])
+            sample_test = data_cum[i].numpy()
+            sample_test = sample_test.reshape(1, 1, sample_test.shape[1], sample_test.shape[2])
+            sample_test_origin = sample_test_origin.reshape(1, 1, sample_test.shape[1], sample_test.shape[2])
 
         if args.data_env != 'local':
-            inputs = torch.from_numpy(inputs).to(torch.float32).cuda()
+            sample_test = torch.from_numpy(sample_test).to(torch.float32).cuda()
+            sample_test_origin = sample_test_origin.to(torch.float32).cuda()
         else:
-            inputs = torch.from_numpy(inputs).to(torch.float32)
+            sample_test = torch.from_numpy(sample_test).to(torch.float32)
+            sample_test_origin = sample_test_origin.to(torch.float32)
 
-        _, outputs = model(inputs)
+        # print("tensor equal:", torch.equal(sample_test, sample_test_origin))  # for debug
+
+        fea_outputs, outputs = proposed_TTA_model(sample_test, sample_test_origin, sqrtRefEA)
 
         softmax_out = nn.Softmax(dim=1)(outputs)
 
         outputs = outputs.float().cpu()
         labels = labels.float().cpu()
         _, predict = torch.max(outputs, 1)
-        pred = torch.squeeze(predict).float()
 
         y_pred.append(softmax_out.detach().cpu().numpy())
         y_true.append(labels.item())
-
-        #################### Phase 2: target model update ####################
-        model.train()
-        # sliding batch
-        if (i + 1) >= args.test_batch and (i + 1) % args.stride == 0:
-            update_start_time = time.time()
-
-            if args.align:
-                inputs = data_cum[i - args.test_batch + 1:i + 1]
-                # transform test batch
-                inputs = np.dot(sqrtRefEA, inputs)
-                inputs = inputs.reshape(args.test_batch, 1, args.chn, args.time_sample_num)
-            else:
-                inputs = data_cum[i - args.test_batch + 1:i + 1, :, :, :].numpy()
-                inputs = inputs.reshape(args.test_batch, 1, inputs.shape[2], inputs.shape[3])
-
-            if args.data_env != 'local':
-                inputs = torch.from_numpy(inputs).to(torch.float32).cuda()
-            else:
-                inputs = torch.from_numpy(inputs).to(torch.float32)
-
-            for step in range(args.steps):
-
-                optimizer.zero_grad()
-
-                # first forward-backward pass
-                loss = torch.mean(Entropy(nn.Softmax(dim=1)(model(inputs)[1].float().cpu() / args.t)))  # use this loss for any training statistics
-                loss.backward()
-                optimizer.first_step(zero_grad=True)
-
-                # second forward-backward pass
-                torch.mean(Entropy(nn.Softmax(dim=1)(model(inputs)[1].float().cpu() / args.t))).backward()  # make sure to do a full forward pass
-                optimizer.second_step(zero_grad=True)
-
-            model.eval()
-            update_end_time = time.time()
-            print(f"time setp: {i}, whole model update time: {update_end_time - update_start_time:.3f} seconds")
-
+        feas.append(fea_outputs.detach().cpu().numpy())
+        
     if balanced:
         _, predict = torch.max(torch.from_numpy(np.array(y_pred)).to(torch.float32).reshape(-1, args.class_num), 1)
         pred = torch.squeeze(predict).float()
@@ -135,13 +126,13 @@ def SAR(loader, model, args, balanced=True):
         if args.data_name == 'BNCI2014001-4':
             y_pred = np.array(y_pred).reshape(-1, args.class_num)  
         else:
-            y_pred = np.array(y_pred).reshape(-1, args.class_num)  
+            y_pred = np.array(y_pred).reshape(-1, args.class_num)
+        feas = np.array(feas)
     else:
         predict = torch.from_numpy(np.array(y_pred)).to(torch.float32).reshape(-1, args.class_num)
-        y_pred = np.array(predict).reshape(-1, args.class_num) 
+        y_pred = np.array(predict).reshape(-1, args.class_num)  
         score = roc_auc_score(y_true, y_pred)
-
-    return score * 100, (y_pred, predict, y_true)
+    return score * 100, (y_pred, predict, y_true), feas
 
 
 def train_target(args):
@@ -159,21 +150,26 @@ def train_target(args):
     if args.data_env != 'local':
         netF, netC = netF.cuda(), netC.cuda()
     base_network = nn.Sequential(netF, netC)
+    # for spliting the model in motta
+    """base_network = nn.Sequential(OrderedDict([
+        ('netF', netF),
+       ('netC', netC),
+    ]))"""
 
     if args.max_epoch == 0:
         if args.align:
             if args.data_env != 'local':
-                base_network.load_state_dict(torch.load(args.param_runs + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load(str(args.param_runs)  + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt'))
             else:
-                base_network.load_state_dict(torch.load(args.param_runs + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load(str(args.param_runs)  + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt', map_location=torch.device('cpu')))
         else:
             if args.data_env != 'local':
-                base_network.load_state_dict(torch.load(args.param_runs + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load(str(args.param_runs)  + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt'))
             else:
-                base_network.load_state_dict(torch.load(args.param_runs + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
+                base_network.load_state_dict(torch.load(str(args.param_runs)  + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) +
                     '_S' + str(args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt', map_location=torch.device('cpu')))
     else:
         criterion = nn.CrossEntropyLoss()
@@ -229,15 +225,17 @@ def train_target(args):
                 base_network.train()
 
         print('saving model...')
-        makedir_if_not_exist(os.path.join(args.param_runs, str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)))
+        makedir_if_not_exist(os.path.join(str(args.param_runs), str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)))
         torch.save(base_network.state_dict(),
-                   args.param_runs + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(
+                   str(args.param_runs)  + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(
                        args.idt) + '_seed' + str(args.SEED) + extra_string + '.ckpt')
 
     fix_random_seed(args.SEED)
     base_network.eval()
 
-    score = cal_score_online(dset_loaders["Target-Online"], base_network, args=args)
+    # score = cal_score_online(dset_loaders["Target-Online"], base_network, args=args)
+    score = 0.0
+
     if args.balanced:
         if args.align:
             log_str = 'Task: {}, Online IEA Acc = {:.2f}%'.format(args.task_str, score)
@@ -255,20 +253,21 @@ def train_target(args):
     print('executing TTA...')
 
     if args.balanced:
-        acc_t_te, (y_pred, predict, y_true) = SAR(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
+        acc_t_te, (y_pred, predict, y_true), feas = motta_func(dset_loaders["Target-Online"], base_network, args=args, balanced=True)
         log_str = 'Task: {}, TTA Acc = {:.2f}%'.format(args.task_str, acc_t_te)
     else:
-        acc_t_te, (y_pred, predict, y_true) = SAR(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
+        acc_t_te, (y_pred, predict, y_true), feas = motta_func(dset_loaders["Target-Online-Imbalanced"], base_network, args=args, balanced=False)
         log_str = 'Task: {}, TTA AUC = {:.2f}%'.format(args.task_str, acc_t_te)
     args.log.record(log_str)
     print(log_str)
 
     if args.balanced:
         print('Test Acc = {:.2f}%'.format(acc_t_te))
+
     else:
         print('Test AUC = {:.2f}%'.format(acc_t_te))
 
-    torch.save(base_network.state_dict(), args.param_runs + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(
+    torch.save(base_network.state_dict(), str(args.param_runs)  + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(
         args.SEED) + extra_string + '_adapted_m'+ str(args.momentum_param) + '.ckpt')
 
     # save the predictions for ensemble
@@ -293,6 +292,9 @@ def train_target(args):
     df_combined = pd.concat([df_existing, df_new], axis=1)
     # Save the combined DataFrame to CSV
     df_combined.to_csv(file_path, index=False)
+    
+    # save the features for visulization
+    save_features_predictions(feas, predict, y_true, args)
 
     gc.collect()
     if args.data_env != 'local':
@@ -319,33 +321,79 @@ if __name__ == '__main__':
     parser.add_argument('--align', type=str2bool, default=True, help='use EA alignment and IEA alignment')
     parser.add_argument('--batch_size', type=int, default=32, help='batch size in offline training')
     parser.add_argument('--batch_size_online', type=int, default=8, help='batch size in online adaptation')
+    parser.add_argument('--stride', type=int, default=1, help='stride in online adaptation')
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate in offline and online training')
     parser.add_argument('--lr_online', type=float, default=0.001, help='learning rate in online adaptation')
     parser.add_argument('--epoch', type=int, default=100, help='epoches in offline and online training')
     parser.add_argument('--backbone', type=str, default='EEGNet', help='backbone of the model')
     parser.add_argument('--param_runs', type=str, default='./runs/', help='folder for saving the run paramters')
+    parser.add_argument('--use_BN', type=str2bool, default=True, help='whether to only use BN adaptation')
+    parser.add_argument('--loss_func', type=str, default="MemorySoftplusEnergyWeightedAlignment", help='the name of loss function')
+    parser.add_argument('--updating_type', type=str, default="entropy", help='updating type')
+    parser.add_argument('--selection_ratio', type=float, default=0.5, help='the ratio for sample selection in EnergyEntropy_selected')
+    parser.add_argument('--selection_ratio_review', type=float, default=0.5, help='the ratio for review sample selection in EnergyEntropy_selected')
+    parser.add_argument('--mt', type=float, default=0.9, help='the momentum value for teacher model')
+    parser.add_argument('--loss_weights', type=float_list, default=[1.0, 1.0, 1.0], help='weights for 3 loss components')
+    parser.add_argument('--scale', type=float, default=5.0, help='the scale value for ConsSamples_selection_two_stage_weighted_4')
+    parser.add_argument('--confidence_threshold', type=float, default=0.75, help='threshold for high-confidence sample selection')
+    parser.add_argument('--entropy_threshold', type=float, default=0.6, help='threshold for low-entropy sample selection')
+    parser.add_argument('--calibrate_probs', type=str2bool, default=False, help='use CalibratedPseudoLabels for calibration')
+    parser.add_argument('--memory_type', type=str, default='DropMemoryBank_review', help='type of memory buffer')
+    parser.add_argument('--memory_review', type=str, default='get_memory_review', help='type of memory review')
+    parser.add_argument('--weight_type', type=str, default='entropy_energy', help='type of weights for sample selection')
+    parser.add_argument('--memory_capacity', type=int, default=64, help='capacity for the memory buffer')
+    parser.add_argument('--thre_alpha', type=float, default=1.0, help='thre_alpha * threshold, the scale factor for dynamic threshold')
+    parser.add_argument('--loss_weight_type', type=str, default='sigmoid', help='type of weights for two-satge updating')
+    parser.add_argument('--gate_type', type=str, default='mean', help='type of weights for gating')
+    parser.add_argument('--buffer_selefction_type', type=str, default='confidence', help='type of weights for buffer selection')
+    parser.add_argument('--min_threshold', type=float, default=0.40, help='minimum threshold for dynamic thresholding')
+    parser.add_argument('--warm_up', type=str, default='capacity', help='type of warm up for memory buffer')
+    parser.add_argument('--temp', type=float, default=1.0, help='temprature for sharpening in the constrastive loss')
+    
+    args_parser = parser.parse_args()
 
-    args = parser.parse_args()
-
-    data_name = args.dataset_name
-    data_save = args.data_save
-    data_path = args.data_path
-    data_path_MI = args.data_path_MI
-    log_path = args.log_path
-    gpu_idx = args.gpu_idx
-    use_pretrained_model = args.use_pretrained_model
-    finetune = args.finetune
-    ft_volume = args.ft_volume
-    momentum = args.momentum
-    momentum_param = args.momentum_param
-    align = args.align
-    batch_size = args.batch_size
-    batch_size_online = args.batch_size_online
-    lr = args.lr
-    epoch = args.epoch
-    backbone = args.backbone
-    param_runs = args.param_runs
-    lr_online = args.lr_online
+    data_name = args_parser.dataset_name
+    data_save = args_parser.data_save
+    data_path = args_parser.data_path
+    data_path_MI = args_parser.data_path_MI
+    log_path = args_parser.log_path
+    gpu_idx = args_parser.gpu_idx
+    use_pretrained_model = args_parser.use_pretrained_model
+    finetune = args_parser.finetune
+    ft_volume = args_parser.ft_volume
+    momentum = args_parser.momentum
+    momentum_param = args_parser.momentum_param
+    align = args_parser.align
+    batch_size = args_parser.batch_size
+    batch_size_online = args_parser.batch_size_online
+    lr = args_parser.lr
+    epoch = args_parser.epoch
+    backbone = args_parser.backbone
+    param_runs = args_parser.param_runs
+    lr_online = args_parser.lr_online
+    use_BN = args_parser.use_BN
+    stride = args_parser.stride
+    loss_func = args_parser.loss_func
+    updating_type = args_parser.updating_type
+    selection_ratio = args_parser.selection_ratio
+    mt = args_parser.mt
+    loss_weights = args_parser.loss_weights
+    scale =args_parser.scale
+    confidence_threshold = args_parser.confidence_threshold
+    entropy_threshold = args_parser.entropy_threshold
+    calibrate_probs = args_parser.calibrate_probs
+    memory_type = args_parser.memory_type
+    memory_review = args_parser.memory_review
+    weight_type = args_parser.weight_type
+    memory_capacity = args_parser.memory_capacity
+    selection_ratio_review = args_parser.selection_ratio_review
+    thre_alpha = args_parser.thre_alpha
+    loss_weight_type = args_parser.loss_weight_type
+    gate_type = args_parser.gate_type
+    buffer_selefction_type = args_parser.buffer_selefction_type
+    min_threshold = args_parser.min_threshold
+    warm_up = args_parser.warm_up
+    temp = args_parser.temp
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -357,7 +405,6 @@ if __name__ == '__main__':
     data_name_list = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4', 'MI-hand_elbow','MI-elbow_rest', 'MI-hand_rest', 
                       'BNCI2014001-4-all', 'BNCI2014001-4-test', 'BNCI2014001-4-train', 'BNCI2014_004-train', 'BNCI2014_004-test',
                       'WBCIC-SHU-3C']
-
     dct = pd.DataFrame(columns=['dataset', 'avg', 'std', 's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13'])
 
     if data_name in data_name_list:
@@ -406,14 +453,8 @@ if __name__ == '__main__':
         # update step
         steps = 1
 
-        # update stride
-        stride = 1
-
         # whether to use EA
         align = align
-
-        # temperature rescaling, for test entropy calculation
-        t = 2
 
         # whether to test balanced or imbalanced (2:1) target subject
         balanced = True
@@ -429,13 +470,13 @@ if __name__ == '__main__':
         if momentum:
             print('momentum: {}, momentum_param: {}'.format(momentum, momentum_param))
 
-        args = argparse.Namespace(feature_deep_dim=feature_deep_dim, align=align, lr=lr, t=t, max_epoch=max_epoch,
+        args = argparse.Namespace(feature_deep_dim=feature_deep_dim, align=align, lr=lr, max_epoch=max_epoch,
                                   trial_num=trial_num, time_sample_num=time_sample_num, sample_rate=sample_rate,
                                   N=N, chn=chn, class_num=class_num, stride=stride, steps=steps, calc_time=calc_time,
-                                  paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced,
-                                  data_path_MI = data_path_MI,finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param)
+                                  paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced, data_path_MI = data_path_MI,
+                                  finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param, mt=mt)
 
-        args.method = 'SAR'
+        args.method = 'proposed_method'
         args.backbone = backbone
 
         args.epoch = epoch
@@ -445,8 +486,8 @@ if __name__ == '__main__':
 
         # path for saving the offline models
         args.param_runs = param_runs
-        args.runs_path = args.param_runs + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)
-
+        args.runs_path = str(args.param_runs)  + str(args.data_name) + '_' + str(args.backbone) + '_b' + str(args.batch_size) + '_e' + str(args.epoch) + '_lr' + str(args.lr)
+        
         # GPU device id
         try:
             device_id = gpu_idx
@@ -454,6 +495,53 @@ if __name__ == '__main__':
             args.data_env = 'gpu' if torch.cuda.device_count() != 0 else 'local'
         except:
             args.data_env = 'local'
+
+        # hyperparameters
+        args.confidence_threshold = confidence_threshold
+        args.entropy_threshold = entropy_threshold
+        args.paras_optim = Box({
+            "name": "Adam",   
+            "lr": args.lr_online,
+            "beta": 0.9,        
+            "wd": 0.0,
+            "two_stage": True,
+        })
+        args.EnergyAlignment = Box({
+            "ratio":selection_ratio,
+            "lambda_1": loss_weights[0],
+            "lambda_2": loss_weights[1],
+            "lambda_3": loss_weights[2],
+            "temp": temp,
+            "scale":scale,
+            "confidence_threshold":confidence_threshold,
+            "num_class":class_num,
+            "entropy_threshold": entropy_threshold,
+            "weight_type": weight_type,
+            "ratio_review": selection_ratio_review,    
+            "thre_alpha": thre_alpha,
+            "loss_weight_type": loss_weight_type,
+            "gate_type": gate_type,
+            "buffer_selefction_type": buffer_selefction_type,
+            "min_threshold": min_threshold,
+            "warm_up": warm_up,
+        })
+        # print(loss_weights[0], loss_weights[1], loss_weights[2])
+        args.capacity = memory_capacity
+        args.bn_alpha = 0.1
+        args.uncertainty_threshold = 0.75
+        args.update_frequency = args.stride
+        args.update_counter = 'each'
+        args.prune_ratio = 0.5
+        args.pruning_strategy = 'ln_structured'
+        args.pruning_module = 'conv'
+        args.metric_name = 'mean_probs_dropout'
+        args.use_BN = use_BN
+        args.loss_name = loss_func
+        args.updating_type = updating_type
+        args.calibrate_probs = calibrate_probs
+        args.memory_type = memory_type
+        args.memory_review = memory_review
+
         total_acc = []
 
         # update multiple models, independently, from the source models
@@ -477,7 +565,7 @@ if __name__ == '__main__':
 
             sub_acc_all = np.zeros(N)
             for idt in range(N):
-                fix_random_seed(args.SEED)  # fix the seed, the seed isn't fixed completely in the original code (this may be related to the python and cuda version)
+                fix_random_seed(args.SEED)  # fix the seed
                 args.idt = idt
                 source_str = 'Except_S' + str(idt)
                 target_str = 'S' + str(idt)
@@ -523,4 +611,4 @@ if __name__ == '__main__':
         dct = dct.append(result_dct, ignore_index=True)
 
     # save results to csv
-    dct.to_csv(log_path + str(args.method) + ".csv")
+    dct.to_csv(os.path.join(log_path, str(args.method) + ".csv"))

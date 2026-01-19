@@ -6,18 +6,18 @@ workspace_folder="/home/jyt/workspace/DeepTransferBCI"
 cd $workspace_folder
 
 # Define the program path (注意: 原脚本中变量名有拼写错误 "progarm_path"，此处保持原样)
-progarm_path="tl/proposed_method/ours_debug_m_cls_process_43.py"
+progarm_path="tl/proposed_method/ours_debug_m_cls_process_48.py"
 
 # Set the PYTHONPATH environment variable
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
 # Define the parameter values to iterate over
-confidence_thresholds=(0.40 0.45 0.50 0.55 0.60 0.65 0.70)
+confidence_thresholds=(0.60 0.65 0.70 0.75 0.80)
 thre_alpha=(1.0)
-loss_weight_type=(20.0)
+loss_weight_type=(5.0)
 
 # Base log path (without the trailing index)
-base_log_path="./logs/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-ablation5/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p"
+base_log_path="./logs/Baselines-WBCIC-SHU-3C-e300-b64/proposed/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-ablation10/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p"
 
 # Initialize a counter for the parameter combinations
 index=1
@@ -34,10 +34,10 @@ for conf in "${confidence_thresholds[@]}"; do
 
           # Execute the Python script with the current parameters
           python3 $progarm_path \
-            --dataset_name "BNCI2014001-4-all" \
+            --dataset_name "WBCIC-SHU-3C" \
             --data_save "True" \
             --data_path "./data/" \
-            --data_path_MI "None" \
+            --data_path_MI "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/" \
             --log_path "$log_path" \
             --use_pretrained_model "True" \
             --finetune "False" \
@@ -47,31 +47,33 @@ for conf in "${confidence_thresholds[@]}"; do
             --align "True" \
             --batch_size "64" \
             --lr "0.001"  \
-            --lr_online "0.001" \
+            --lr_online "0.0001" \
             --epoch "300"  \
             --backbone "EEGNet-4,2" \
             --param_runs "./runs_debug/" \
             --use_BN "False" \
-            --stride "8" \
+            --stride "1" \
             --batch_size_online "8" \
-            --loss_func "CE_KL_review_weighted_10,ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4" \
+            --loss_func "CE_KL_review_weighted_10_constrastive_fea" \
             --selection_ratio "0.75" \
-            --selection_ratio_review "0.5" \
+            --selection_ratio_review "1.0" \
             --mt "0.9" \
             --updating_type "entropy_review" \
             --loss_weights "1.0, 1.0, 1.0" \
             --scale "$los" \
             --confidence_threshold "$conf" \
             --entropy_threshold "0.50" \
-            --memory_type "FIFO" \
+            --memory_type "DropMemoryBank_review_8" \
             --memory_review "get_memory" \
             --weight_type "entropy" \
             --memory_capacity "64" \
             --thre_alpha "$ent" \
-            --loss_weight_type "constant_1" \
+            --loss_weight_type "constant_0" \
             --gate_type "mean" \
             --buffer_selefction_type "dynamic_confidence" \
-            --min_threshold "0.40" \
+            --min_threshold "0.60" \
+            --temp "2.0" \
+            --two_stage "False" \
           # Increment the index for the next combination
           ((index++))
           

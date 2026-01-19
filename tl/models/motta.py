@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from torch import Tensor
 import torch.jit
 from torch.nn.utils import prune
+import time 
 
 from easydict import EasyDict as edict
 
@@ -207,6 +208,8 @@ class MoTTA(nn.Module):
 
     @torch.enable_grad()
     def update_model(self, filtered_data):
+        update_time_start = time.time()
+        
         loss_fn = self.loss_fn
 
         if getattr(self, 'use_buffer', False):
@@ -248,6 +251,10 @@ class MoTTA(nn.Module):
 
             if not self.fix_pruning_model:
                 update_pruned_model(self.feature_extractor, self.feature_extractor_prune)
+        
+        update_time_end = time.time()
+        print(f"num instance: {self.num_instance}, whole model update time: {update_time_end - update_time_start:.3f} seconds")
+
 
     def check_updates(self):
         is_update = is_updated(self.feature_extractor, self.feature_extractor_init)
