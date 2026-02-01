@@ -15,7 +15,7 @@ from easydict import EasyDict as edict
 import time
 
 # from robustbench.model_zoo.architectures.utils_architectures import normalize_model, ImageNormalizer
-from tl.utils.memory_proposed_4 import DropMemoryBank_review_8, HUS, CSTU, FIFO, OnlineBufferInstance
+from tl.utils.memory_proposed_4 import DropMemoryBank_review_8, HUS, CSTU, FIFO, OnlineBufferInstance, DropMemoryBank_review_9
 from tl.utils.loss_proposed_2 import CE_KL, CE_KL_review_weighted_10, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_3, ConsSamples_selection_two_stage_weighted_4_1_modified, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4, \
     ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4_feas, ConsSamples_selection_two_stage_weighted_4_1_modified_feas, CE_KL_review_weighted_10_constrastive, ConsSamples_selection_two_stage_weighted_4_1_modified_2, _entropy_samples, CE_KL_review_weighted_10_constrastive_fea
 from tl.utils.calibration_proposed import DynamicThresholdSelector
@@ -77,6 +77,9 @@ class proposed_TTA(nn.Module):
         # memory
         if self.memory_type in ['DropMemoryBank_review_8']:
             self.memory = DropMemoryBank_review_8(capacity, num_classes, confidence_threshold, uncertainty_threshold,
+                                     category_uniform)
+        elif self.memory_type in ['DropMemoryBank_review_9']:
+            self.memory = DropMemoryBank_review_9(capacity, num_classes, confidence_threshold, uncertainty_threshold,
                                      category_uniform)
         elif self.memory_type in ['HUS']:
             self.memory = HUS(capacity, num_classes, confidence_threshold, uncertainty_threshold,

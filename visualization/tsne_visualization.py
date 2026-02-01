@@ -17,7 +17,7 @@ from tl.utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_c
     save_features_predictions, load_features_predictions
 from tl.utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
-from tl.models.proposed_method_14 import proposed_TTA
+from tl.models.proposed_method_43 import proposed_TTA
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 from box import Box

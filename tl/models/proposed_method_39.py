@@ -650,6 +650,8 @@ class proposed_TTA(nn.Module):
                         else:
                             if self.EnergyAlignment.loss_weight_type in ['buffer_only']:
                                 loss_1 = torch.tensor(0.0, device=preds_of_data_1.device, requires_grad=True)
+                            elif self.losses[1].strip() in ['ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4_feas']:
+                                loss_1 = loss_fn_1_0(preds_of_data_1, feas_of_data_1, preds_of_data.clone().detach())
                             else:
                                 loss_1 = loss_fn_1_0(preds_of_data_1, preds_of_data.clone().detach())
                         
