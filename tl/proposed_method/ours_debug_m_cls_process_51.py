@@ -16,7 +16,7 @@ from tl.utils.dataloader import read_mi_combine_tar
 from tl.utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist, build_optimizer, save_features_predictions
 from tl.utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
-from tl.models.proposed_method_45 import proposed_TTA
+from tl.models.proposed_method_46 import proposed_TTA
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 import gc
@@ -352,6 +352,7 @@ if __name__ == '__main__':
     parser.add_argument('--two_stage', type=str2bool, default=True, help='update the model in a two stage form')
     parser.add_argument('--save_results', type=str2bool, default=False, help='whether to save results for visulization')
     parser.add_argument('--save_results_two_stage', type=str2bool, default=False, help='whether to save results of two stage for visulization')
+    parser.add_argument('--grad_visual', type=str2bool, default=False, help='whether to save results of grads for visulization')
     
     args_parser = parser.parse_args()
 
@@ -400,6 +401,7 @@ if __name__ == '__main__':
     two_stage = args_parser.two_stage
     save_results = args_parser.save_results
     save_results_two_stage = args_parser.save_results_two_stage
+    grad_visual = args_parser.grad_visual
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -532,6 +534,7 @@ if __name__ == '__main__':
             "warm_up": warm_up,
             "save_results": save_results,
             "save_results_two_stage": save_results_two_stage,
+            "grad_visual":grad_visual,
         })
         # print(loss_weights[0], loss_weights[1], loss_weights[2])
         args.capacity = memory_capacity
