@@ -259,6 +259,45 @@ def cal_acc_comb(loader, model, flag=True, fc=None, args=None):
     return acc * 100, all_output
 
 
+def cal_acc_comb_logits(loader, model, flag=True, fc=None, args=None, return_logits=False):
+    start_test = True
+    model.eval()
+    logits_all = []
+    with tr.no_grad():
+        iter_test = iter(loader)
+        for i in range(len(loader)):
+            data = next(iter_test)
+            inputs = data[0]
+            labels = data[1]
+            if args.data_env != 'local':
+                inputs = inputs.cuda()
+            if flag:
+                _, outputs = model(inputs)
+            else:
+                if fc is not None:
+                    outputs, _ = model(inputs)
+                else:
+                    outputs = model(inputs)
+            if start_test:
+                all_output = outputs.float().cpu()
+                all_label = labels.float()
+                logits_all = outputs.detach().cpu().numpy()
+                start_test = False
+            else:
+                all_output = tr.cat((all_output, outputs.float().cpu()), 0)
+                all_label = tr.cat((all_label, labels.float()), 0)
+                logits_all = np.concatenate((logits_all, outputs.detach().cpu().numpy()), axis=0)
+    all_output_softmax = nn.Softmax(dim=1)(all_output)
+    _, predict = tr.max(all_output_softmax, 1)
+    pred = tr.squeeze(predict).float()
+    true = all_label.cpu()
+    acc = accuracy_score(true, pred)
+
+    if return_logits:
+        return acc * 100, all_output_softmax, all_label.cpu().numpy(), logits_all
+    else:
+        return acc * 100, all_output_softmax
+
 def convert_label(labels, axis, threshold):
     # Converting labels to 0 or 1, based on a certain threshold
     label_01 = np.where(labels > threshold, 1, 0)

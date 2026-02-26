@@ -68,8 +68,10 @@ def sotta_func(loader, model, args, balanced=True):
 
             if i == 0:
                 sample_test = data_cum.reshape(args.chn, args.time_sample_num)
+                sample_test_origin = data_cum.reshape(args.chn, args.time_sample_num)
             else:
                 sample_test = data_cum[i].reshape(args.chn, args.time_sample_num)
+                sample_test_origin = data_cum[i].reshape(args.chn, args.time_sample_num)
             # update reference matrix
             R = EA_online(sample_test, R, i)
 
@@ -81,17 +83,21 @@ def sotta_func(loader, model, args, balanced=True):
             if args.calc_time:
                 print('sample ', str(i), ', pre-inference IEA finished time in ms:', np.round((EA_time - start_time) * 1000, 3))
             sample_test = sample_test.reshape(1, 1, args.chn, args.time_sample_num)
+            sample_test_origin = sample_test_origin.reshape(1, 1, args.chn, args.time_sample_num)
         else:
             sample_test = data_cum[i].numpy()
             sample_test = sample_test.reshape(1, 1, sample_test.shape[1], sample_test.shape[2])
+            sample_test_origin = sample_test_origin.reshape(1, 1, sample_test.shape[1], sample_test.shape[2])
 
         if args.data_env != 'local':
             sample_test = torch.from_numpy(sample_test).to(torch.float32).cuda()
+            sample_test_origin = sample_test_origin.to(torch.float32).cuda()
         else:
             sample_test = torch.from_numpy(sample_test).to(torch.float32)
+            sample_test_origin = sample_test_origin.to(torch.float32)
 
         # the model will infer and update
-        outputs = sotta_model.train_online(current_num_sample=i, current_sample=sample_test, args=args)
+        outputs = sotta_model.train_online(current_num_sample=i, current_sample=sample_test, orginal_data=sample_test_origin, sqrtRefEA=sqrtRefEA, args=args)
 
         softmax_out = nn.Softmax(dim=1)(outputs)
 
@@ -298,7 +304,8 @@ if __name__ == '__main__':
     parser.add_argument('--epoch', type=int, default=100, help='epoches in offline and online training')
     parser.add_argument('--backbone', type=str, default='EEGNet', help='backbone of the model')
     parser.add_argument('--param_runs', type=str, default='./runs/', help='folder for saving the run paramters')
-
+    parser.add_argument('--confidence_threshold', type=float, default=0.6, help='conifidence threshold for memory')
+    
     args = parser.parse_args()
 
     data_name = args.dataset_name
@@ -320,6 +327,7 @@ if __name__ == '__main__':
     backbone = args.backbone
     param_runs = args.param_runs
     lr_online = args.lr_online
+    confidence_threshold = args.confidence_threshold
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -432,9 +440,9 @@ if __name__ == '__main__':
         args.bn_momentum = 0.2
         args.memory_type = 'HUS'
         args.memory_size = 64 
-        args.high_threshold = 0.67
-        args.update_every_x = 64
-        args.batch_size_online = args.update_every_x  # following the original paper of sotta, the adaptation interval is the same as the memory capacity
+        args.high_threshold = confidence_threshold
+        args.batch_size_online = batch_size_online
+        args.update_every_x = 64  # following the original paper of sotta, the adaptation interval is the same as the memory capacity
         args.temperature = 1.0
         
         total_acc = []

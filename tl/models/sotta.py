@@ -13,6 +13,7 @@ class SoTTA(nn.Module):
         # turn on grad for BN params only
         self.net = model
         self.steps = steps
+        self.align = args.align  
         # self.device = torch.device("cuda:{:d}".format(args.gpu_idx) if torch.cuda.is_available() else "cpu")
         params, _ = sam_collect_params(self.net, freeze_top=True)
         self.optimizer = SAM(params, torch.optim.Adam, rho=0.05, lr=args.lr_online,
@@ -64,31 +65,31 @@ class SoTTA(nn.Module):
         self.ema = None
         self.batchnorm_stats = []
 
-    def train_online(self, current_num_sample, current_sample, args, add_memory=True, evaluation=True):
+    def train_online(self, current_num_sample, current_sample, orginal_data, sqrtRefEA, args, add_memory=True, evaluation=True):
         """
         Train the model online 
         """
 
         # In sotta, every online coming sample will be choosen to be stored in the memory
         if add_memory:
-            # self.fifo.add_instance(current_sample)  # for batch-based inference
+            # self.fifo.add_instance(orginal_data)  # for batch-based inference
 
             with torch.no_grad():
 
                 self.net.eval()
 
                 if args.memory_type in ['FIFO']:
-                    self.mem.add_instance(current_sample)
+                    self.mem.add_instance(orginal_data)
 
                 elif args.memory_type in ['HUS', 'ConfFIFO']:
-                    f, c, d = current_sample.cuda(), torch.tensor(0).cuda(), torch.tensor(0).cuda()
+                    f, c, d = orginal_data.cuda(), torch.tensor(0).cuda(), torch.tensor(0).cuda()
                     _, logit = self.net(f)
                     pseudo_cls = logit.max(1, keepdim=False)[1][0].cpu().numpy()
                     pseudo_conf = F.softmax(logit, dim=1).max(1, keepdim=False)[0][0].cpu().numpy()
                     self.mem.add_instance([f, pseudo_cls, d, pseudo_conf])
 
                 elif args.memory_type in ['CSTU']:
-                    f, c, d = current_sample.cuda(), torch.tensor(0).cuda(), torch.tensor(0).cuda()
+                    f, c, d = orginal_data.cuda(), torch.tensor(0).cuda(), torch.tensor(0).cuda()
                     _, ema_out = self.net(f)
                     predict = torch.softmax(ema_out, dim=1)
                     pseudo_label = torch.argmax(predict, dim=1)
@@ -119,12 +120,19 @@ class SoTTA(nn.Module):
             else:
                 feats, _, _ = self.mem.get_memory()
 
-            print("current sample index for updating: {}, memory size: {}".format(current_num_sample, len(feats)))
+            # print("current sample index for updating: {}, memory size: {}".format(current_num_sample, len(feats)))
 
             if len(feats)==0:
                 return outputs # if no memory to train on, return current outputs directly
 
             feats = torch.stack(feats)
+            if self.align:
+                if not isinstance(sqrtRefEA, torch.Tensor):
+                    sqrtRefEA = torch.tensor(sqrtRefEA, device=feats.device, dtype=torch.float32)
+                else:
+                    sqrtRefEA = sqrtRefEA.to(feats.device, non_blocking=True)
+                feats = torch.matmul(sqrtRefEA, feats)
+
             dataset = torch.utils.data.TensorDataset(feats)
             data_loader = DataLoader(dataset, batch_size=args.batch_size_online,
                                     shuffle=True, drop_last=False, pin_memory=False)
@@ -135,7 +143,7 @@ class SoTTA(nn.Module):
                 for batch_idx, (feats,) in enumerate(data_loader):
                     self.step(loss_fn=entropy_loss, feats=feats)
             update_end_time = time.time()
-            print("Adaptation time: {:.3f} seconds.".format(update_end_time - update_start_time))
+            # print("Adaptation time: {:.3f} seconds.".format(update_end_time - update_start_time))
         return outputs
 
     def step(self, loss_fn, feats=None):

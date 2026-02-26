@@ -12,7 +12,7 @@ import pandas as pd
 from tl.utils.network import backbone_net, feat_classifier
 from tl.utils.LogRecord import LogRecord
 from tl.utils.dataloader import read_mi_combine_tar
-from tl.utils.utils import lr_scheduler_full, fix_random_seed, cal_acc_comb, data_loader
+from tl.utils.utils import lr_scheduler_full, fix_random_seed, cal_acc_comb, cal_acc_comb_logits, data_loader
 from tl.utils.loss import CELabelSmooth_raw, Entropy, ReverseLayerF
 from tl.utils.utils import float_list, str2bool
 
@@ -93,14 +93,28 @@ def train_target(args):
         if iter_num % interval_iter == 0 or iter_num == max_iter:
             base_network.eval()
 
-            acc_t_te, _ = cal_acc_comb(dset_loaders["Target"], base_network, args=args)
+            acc_t_te, all_output, all_label, all_logits = cal_acc_comb_logits(dset_loaders["Target"], base_network, args=args, return_logits=True)
             log_str = 'Task: {}, Iter:{}/{}; Acc = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
             args.log.record(log_str)
             print(log_str)
+            
+            if iter_num == max_iter:
+                logits_list = all_logits
+                labels_list = all_label
 
             base_network.train()
 
     print('Test Acc = {:.2f}%'.format(acc_t_te))
+
+    # 保存logits和labels
+    save_path = os.path.join(args.result_dir, "results")
+    os.makedirs(save_path, exist_ok=True)
+    np.savez(
+        os.path.join(save_path, f"test_logits_labels_sub{args.idt}_seed{args.SEED}.npz"),
+        logits=logits_list,
+        labels=labels_list,
+        acc_t = acc_t_te,
+    )
 
     gc.collect()
     torch.cuda.empty_cache()
@@ -250,7 +264,7 @@ if __name__ == '__main__':
             if data_name == 'WBCIC-SHU-3C': paradigm, N, chn, class_num, time_sample_num, sample_rate, trial_num, feature_deep_dim = 'MI', 11, 58, 3, 1000, 250, 900, 248
         
         args = argparse.Namespace(feature_deep_dim=feature_deep_dim, trial_num=trial_num, layer='wn',
-                                  time_sample_num=time_sample_num, sample_rate=sample_rate,
+                                  time_sample_num=time_sample_num, sample_rate=sample_rate, data_path_MI=data_path_MI,
                                   N=N, chn=chn, class_num=class_num, paradigm=paradigm)
 
         args.method = 'DANN'

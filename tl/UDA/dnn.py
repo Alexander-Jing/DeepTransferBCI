@@ -13,7 +13,7 @@ import pandas as pd
 from utils.network import backbone_net
 from utils.LogRecord import LogRecord
 from utils.dataloader import read_mi_combine_tar
-from utils.utils import fix_random_seed, cal_acc_comb, data_loader
+from utils.utils import fix_random_seed, cal_acc_comb, cal_acc_comb_logits, data_loader
 
 import gc
 import sys

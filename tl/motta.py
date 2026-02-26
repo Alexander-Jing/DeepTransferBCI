@@ -75,8 +75,10 @@ def motta_func(loader, model, args, balanced=True):
 
             if i == 0:
                 sample_test = data_cum.reshape(args.chn, args.time_sample_num)
+                sample_test_origin = data_cum.reshape(args.chn, args.time_sample_num)
             else:
                 sample_test = data_cum[i].reshape(args.chn, args.time_sample_num)
+                sample_test_origin = data_cum[i].reshape(args.chn, args.time_sample_num)
             # update reference matrix
             R = EA_online(sample_test, R, i)
 
@@ -88,16 +90,20 @@ def motta_func(loader, model, args, balanced=True):
             if args.calc_time:
                 print('sample ', str(i), ', pre-inference IEA finished time in ms:', np.round((EA_time - start_time) * 1000, 3))
             sample_test = sample_test.reshape(1, 1, args.chn, args.time_sample_num)
+            sample_test_origin = sample_test_origin.reshape(1, 1, args.chn, args.time_sample_num)
         else:
             sample_test = data_cum[i].numpy()
             sample_test = sample_test.reshape(1, 1, sample_test.shape[1], sample_test.shape[2])
+            sample_test_origin = sample_test_origin.reshape(1, 1, sample_test.shape[1], sample_test.shape[2])
 
         if args.data_env != 'local':
             sample_test = torch.from_numpy(sample_test).to(torch.float32).cuda()
+            sample_test_origin = sample_test_origin.to(torch.float32).cuda()
         else:
             sample_test = torch.from_numpy(sample_test).to(torch.float32)
+            sample_test_origin = sample_test_origin.to(torch.float32)
 
-        outputs = motta_model(sample_test)["logits"]
+        outputs = motta_model(sample_test, sample_test_origin, sqrtRefEA)["logits"]
 
         softmax_out = nn.Softmax(dim=1)(outputs)
 
@@ -309,7 +315,8 @@ if __name__ == '__main__':
     parser.add_argument('--epoch', type=int, default=100, help='epoches in offline and online training')
     parser.add_argument('--backbone', type=str, default='EEGNet', help='backbone of the model')
     parser.add_argument('--param_runs', type=str, default='./runs/', help='folder for saving the run paramters')
-
+    parser.add_argument('--confidence_threshold', type=float, default=0.6, help='conifidence threshold for memory')
+    
     args = parser.parse_args()
 
     data_name = args.dataset_name
@@ -331,6 +338,7 @@ if __name__ == '__main__':
     backbone = args.backbone
     param_runs = args.param_runs
     lr_online = args.lr_online
+    confidence_threshold = args.confidence_threshold
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -454,9 +462,9 @@ if __name__ == '__main__':
         })
         args.capacity = 64
         args.bn_alpha = 0.2
-        args.update_frequency = 64
+        args.update_frequency = batch_size_online
         args.update_counter = 'each'
-        args.confidence_threshold = 0.33
+        args.confidence_threshold = confidence_threshold
         args.uncertainty_threshold = 17.0
         args.prune_ratio = 0.5
         args.pruning_strategy = 'ln_structured'

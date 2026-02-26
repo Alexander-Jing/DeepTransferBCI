@@ -523,7 +523,7 @@
             "name": "Baselines: TTA/UDA-BCNI2014001-4-all",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/UDA/mdd.py",
+            "program": "${workspaceFolder}/tl/UDA/cdan.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -531,7 +531,7 @@
                 "--data_save", "True",
                 "--data_path", "./data/",
                 "--data_path_MI", "None",
-                "--log_path", "./logs/Baselines-001-all-e300-b64-debugs/mdd-BNCI2014001-test-EEGNet-4,2-e300-b64/",
+                "--log_path", "./logs/Baselines-001-all-e300-b64-debugs/cdan-BNCI2014001-test-EEGNet-4,2-e300-b64/",
                 "--use_pretrained_model", "True",
                 "--finetune", "False",
                 "--momentum", "False",
@@ -541,7 +541,7 @@
                 "--batch_size", "64",
                 "--lr", "0.001",
                 "--lr_online", "0.001",
-                "--epoch", "1",
+                "--epoch", "10",
                 "--backbone", "EEGNet-4,2",
                 "--param_runs", "./runs_debug_UDA/",
             ],
@@ -551,7 +551,39 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Baselines: TTA-001-004",  // choose the method you want to run
+            "name": "Baselines: TTA-001",  // choose the method you want to run
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tl/motta.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--dataset_name", "BNCI2014001-4-all",
+                "--data_save", "True",
+                "--data_path", "./data/",
+                "--data_path_MI", "None",
+                "--log_path", "./logs/Baselines-001-all-e300-b64-debugs/debugs/motta-BNCI2014001-4-all-EEGNet-4,2-e300-b64/",
+                "--use_pretrained_model", "True",
+                "--finetune", "False",
+                "--momentum", "False",
+                "--momentum_param", "0.5",
+                "--gpu_idx", "0",
+                "--align", "True",
+                "--batch_size", "64",
+                "--lr", "0.001",
+                "--lr_online", "0.001",
+                "--epoch", "300",
+                "--backbone", "EEGNet-4,2",
+                "--param_runs", "./runs_debug/",
+                "--confidence_threshold", "0.45",
+            ],
+            "env": {
+                "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Baselines: TTA-004",  // choose the method you want to run
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/tl/ttime_debug_m_cls_process.py",

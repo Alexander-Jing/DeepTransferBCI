@@ -18,9 +18,17 @@ class RoTTA(BaseAdapter):
         self.update_frequency = args.update_frequency  # actually the same as the size of memory bank
         self.current_instance = 0
         self.alpha = args.alpha
+        self.align = True
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    def forward(self, x, orginal_data, sqrtRefEA):
+        for _ in range(self.steps):
+            outputs = self.forward_and_adapt(x, orginal_data, sqrtRefEA, self.model, self.optimizer)
+
+        return outputs
+    
     @torch.enable_grad()
-    def forward_and_adapt(self, batch_data, model, optimizer):
+    def forward_and_adapt(self, batch_data, orginal_data, sqrtRefEA, model, optimizer):
         # batch data
         with torch.no_grad():
             model.eval()
@@ -31,7 +39,7 @@ class RoTTA(BaseAdapter):
             entropy = torch.sum(- predict * torch.log(predict + 1e-6), dim=1)
 
         # add into memory
-        for i, data in enumerate(batch_data):
+        for i, data in enumerate(orginal_data):
             p_l = pseudo_label[i].item()
             uncertainty = entropy[i].item()
             current_instance = (data, p_l, uncertainty)
@@ -39,12 +47,16 @@ class RoTTA(BaseAdapter):
             self.current_instance += 1
 
             if self.current_instance % self.update_frequency == 0:
-                self.update_model(model, optimizer)
-                print("time: {}, update model".format(self.current_instance))
+                if not isinstance(sqrtRefEA, torch.Tensor):
+                    sqrtRefEA = torch.tensor(sqrtRefEA, device=self.device, dtype=torch.float32)
+                else:
+                    sqrtRefEA = sqrtRefEA.to(self.device, non_blocking=True) # on the device
+                self.update_model(model, optimizer, sqrtRefEA)
+                # print("time: {}, update model".format(self.current_instance))
 
         return ema_out
 
-    def update_model(self, model, optimizer):
+    def update_model(self, model, optimizer, sqrtRefEA):
         model.train()
         self.model_ema.train()
         # get memory data
@@ -52,6 +64,8 @@ class RoTTA(BaseAdapter):
         l_sup = None
         if len(sup_data) > 0:
             sup_data = torch.stack(sup_data)
+            if self.align:
+                sup_data = torch.matmul(sqrtRefEA, sup_data)
             # strong_sup_aug = self.transform(sup_data)
             strong_sup_aug = sup_data  # for EEG signals, it is hard to apply augmentation, so we do not apply it 
             _, ema_sup_out = self.model_ema(sup_data)

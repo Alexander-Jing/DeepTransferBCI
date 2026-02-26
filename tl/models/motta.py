@@ -55,6 +55,7 @@ class MoTTA(nn.Module):
         self.episodic = episodic
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.return_type = return_type
+        self.align = True
 
         # memory
 
@@ -146,7 +147,7 @@ class MoTTA(nn.Module):
 
         return params, names
 
-    def forward(self, x):
+    def forward(self, x, sample_test_origin, sqrtRefEA):
         if isinstance(x, dict):
             x = x['img']
 
@@ -175,7 +176,7 @@ class MoTTA(nn.Module):
         # update memory
         update_model_flag = False
         filtered_data = []
-        for i, data in enumerate(x):
+        for i, data in enumerate(sample_test_origin):
 
             p_l = pseudo_label[i].item()
             conf = pseudo_conf[i].item()
@@ -200,14 +201,20 @@ class MoTTA(nn.Module):
 
         # update model
         if update_model_flag:
+
+            if not isinstance(sqrtRefEA, torch.Tensor):
+                sqrtRefEA = torch.tensor(sqrtRefEA, device=self.device, dtype=torch.float32)
+            else:
+                sqrtRefEA = sqrtRefEA.to(self.device, non_blocking=True) # on the device
+            
             for _ in range(self.steps):
-                self.update_model(filtered_data)
+                self.update_model(filtered_data, sqrtRefEA)
 
         # return outputs
         return dict(logits=out)
 
     @torch.enable_grad()
-    def update_model(self, filtered_data):
+    def update_model(self, filtered_data, sqrtRefEA):
         update_time_start = time.time()
         
         loss_fn = self.loss_fn
@@ -221,6 +228,9 @@ class MoTTA(nn.Module):
             sup_data = torch.stack(sup_data)
             # sup_data = sup_data.to(self.device, non_blocking=True)
             sup_data = sup_data.cuda(non_blocking=True)
+
+            if self.align:
+                sup_data = torch.matmul(sqrtRefEA, sup_data)
 
             self.model.train()
 
@@ -253,7 +263,7 @@ class MoTTA(nn.Module):
                 update_pruned_model(self.feature_extractor, self.feature_extractor_prune)
         
         update_time_end = time.time()
-        print(f"num instance: {self.num_instance}, whole model update time: {update_time_end - update_time_start:.3f} seconds")
+        # print(f"num instance: {self.num_instance}, whole model update time: {update_time_end - update_time_start:.3f} seconds")
 
 
     def check_updates(self):

@@ -70,8 +70,10 @@ def rotta_func(loader, model, args, balanced=True):
 
             if i == 0:
                 sample_test = data_cum.reshape(args.chn, args.time_sample_num)
+                sample_test_origin = data_cum.reshape(args.chn, args.time_sample_num)
             else:
                 sample_test = data_cum[i].reshape(args.chn, args.time_sample_num)
+                sample_test_origin = data_cum[i].reshape(args.chn, args.time_sample_num)
             # update reference matrix
             R = EA_online(sample_test, R, i)
 
@@ -83,16 +85,21 @@ def rotta_func(loader, model, args, balanced=True):
             if args.calc_time:
                 print('sample ', str(i), ', pre-inference IEA finished time in ms:', np.round((EA_time - start_time) * 1000, 3))
             sample_test = sample_test.reshape(1, 1, args.chn, args.time_sample_num)
+            sample_test_origin = sample_test_origin.reshape(1, 1, args.chn, args.time_sample_num)
         else:
             sample_test = data_cum[i].numpy()
             sample_test = sample_test.reshape(1, 1, sample_test.shape[1], sample_test.shape[2])
+            sample_test_origin = sample_test_origin.reshape(1, 1, sample_test.shape[1], sample_test.shape[2])
 
         if args.data_env != 'local':
             sample_test = torch.from_numpy(sample_test).to(torch.float32).cuda()
+            sample_test_origin = sample_test_origin.to(torch.float32).cuda()
         else:
             sample_test = torch.from_numpy(sample_test).to(torch.float32)
+            sample_test_origin = sample_test_origin.to(torch.float32)
 
-        outputs = rotta_model(sample_test)
+        #print("tensor equal:", torch.equal(sample_test, sample_test_origin))  # for debug
+        outputs = rotta_model(sample_test, sample_test_origin, sqrtRefEA)
 
         softmax_out = nn.Softmax(dim=1)(outputs)
 
@@ -433,7 +440,7 @@ if __name__ == '__main__':
         args.memory_size = 64
         args.lambda_t, args.lambda_u = 1.0, 1.0
         args.nu = 0.001
-        args.update_frequency = 64
+        args.update_frequency = batch_size_online
         args.alpha = 0.05
         args.steps = 1
 
