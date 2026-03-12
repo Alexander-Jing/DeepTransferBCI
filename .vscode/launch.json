@@ -51,7 +51,8 @@
                 "--use_BN", "False",
                 //"--loss_func", "CE_KL_review_weighted_10,ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4_feas",
                 //"--loss_func", "CE_KL_review_weighted_10_constrastive_visual",
-                "--loss_func", "review_constrastive_loss",
+                //"--loss_func", "review_constrastive_loss",
+                "--loss_func", "CE_KL",
                 //"--presudo_src", "False",
                 "--selection_ratio", "0.75",
                 "--selection_ratio_review", "0.50",
@@ -554,7 +555,7 @@
             "name": "Baselines: TTA-001",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/motta.py",
+            "program": "${workspaceFolder}/tl/aea.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -571,11 +572,13 @@
                 "--align", "True",
                 "--batch_size", "64",
                 "--lr", "0.001",
-                "--lr_online", "0.001",
+                "--lr_online", "0.0001",
                 "--epoch", "300",
                 "--backbone", "EEGNet-4,2",
                 "--param_runs", "./runs_debug/",
-                "--confidence_threshold", "0.45",
+                //"--confidence_threshold", "0.45",
+                "--batch_size_online", "8",
+                "--stride", "8",
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"

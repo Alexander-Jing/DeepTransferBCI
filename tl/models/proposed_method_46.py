@@ -365,6 +365,16 @@ class proposed_TTA(nn.Module):
                                 loss = self.loss_fn(preds_of_data, preds_of_data_review, review_data_class, review_data_logits, feas_of_data, feas_of_data_review, mean_entropy, std_entropy)
                             else:
                                 loss = self.loss_fn_0(preds_of_data, preds_of_data.clone().detach())
+                        elif self.loss_name in ["CE_KL_review_weighted_10", "ablation2"]: 
+                            if use_buffer_loss:
+                                loss = self.loss_fn(preds_of_data, preds_of_data_review, review_data_class, review_data_logits, mean_entropy, std_entropy)
+                            else:
+                                loss = self.loss_fn_0(preds_of_data)
+                        elif self.loss_name in ["CE_KL", "ablation3"]: 
+                            if use_buffer_loss:
+                                loss = self.loss_fn(preds_of_data)
+                            else:
+                                loss = self.loss_fn_0(preds_of_data)
                         else:
                             loss = self.loss_fn(preds_of_data)
 

@@ -325,6 +325,7 @@ if __name__ == '__main__':
     parser.add_argument('--align', type=str2bool, default=True, help='use EA alignment and IEA alignment')
     parser.add_argument('--batch_size', type=int, default=32, help='batch size in offline training')
     parser.add_argument('--batch_size_online', type=int, default=8, help='batch size in online adaptation')
+    parser.add_argument('--stride', type=int, default=8, help='stride in online adaptation')
     parser.add_argument('--lr', type=float, default=0.001, help='learning rate in offline and online training')
     parser.add_argument('--lr_online', type=float, default=0.001, help='learning rate in online adaptation')
     parser.add_argument('--epoch', type=int, default=100, help='epoches in offline and online training')
@@ -352,6 +353,7 @@ if __name__ == '__main__':
     backbone = args.backbone
     param_runs = args.param_runs
     lr_online = args.lr_online
+    stride = args.stride
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -412,7 +414,7 @@ if __name__ == '__main__':
         steps = 1
 
         # update stride
-        stride = 64
+        stride = stride
 
         # whether to use EA
         align = align
