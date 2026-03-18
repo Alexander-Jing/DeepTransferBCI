@@ -5,6 +5,7 @@ import argparse
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import csv
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from tl.utils.utils import str2bool
@@ -17,7 +18,7 @@ import matplotlib.ticker as ticker
 def Test_time_visualizationClass(data_path, class_num, trial_num, current_dir, data_name, imgdata_save=False):
     # load the data
     data = pd.read_csv(data_path, header=0)
-    
+
     # calculate the num of subjects
     n_subjects = len(data.columns) // (class_num+2)  
     all_accuracies = []  # for restoring accuracy values for each segment
@@ -590,6 +591,149 @@ def Test_time_visualizationClass_seeds_multiple_methods_2(class_num, trial_num, 
     plt.show()
 
 
+def Test_time_visualizationClass_seeds_multiple_methods_3(class_num, trial_num, current_dir, data_name, log_paths, args, font_size=22):
+    # 确保log_paths是列表
+    method_paths = log_paths if isinstance(log_paths, list) else [log_paths]
+    
+    # 存储所有方法的结果
+    all_methods_results = {}
+    
+    # 处理每个方法
+    for method_path in method_paths:
+        method_name = os.path.basename(method_path.rstrip('/'))
+        print(f"处理方法: {method_name}")
+        
+        # 查找该方法的seed文件
+        _pattern = re.compile(r'_seed_\d+_pred\.csv$')
+        csv_files = []
+        for _file_name in os.listdir(method_path):
+            if _file_name.endswith('.csv') and _pattern.search(_file_name):
+                full_path = os.path.join(method_path, _file_name)
+                csv_files.append(full_path)
+        
+        # 初始化存储结构
+        stats_ensamble = {
+            'mean_seeds': [],
+            'mean_ensamble': None,
+        }
+        
+        # 处理每个seed文件
+        for data_path in csv_files:
+            stats = Test_time_visualizationClass(
+                data_path, class_num, trial_num, current_dir, data_name, 
+                imgdata_save=False  # 不保存中间结果
+            )
+            stats_ensamble['mean_seeds'].append(stats['mean'])
+        
+        # 计算跨seed的平均值
+        if stats_ensamble['mean_seeds']:
+            stats_ensamble['mean_seeds'] = np.array(stats_ensamble['mean_seeds'])
+            stats_ensamble['mean_ensamble'] = np.mean(stats_ensamble['mean_seeds'], axis=0)
+        
+        # 存储该方法的结果
+        all_methods_results[method_name] = stats_ensamble
+    
+    # 打印每个方法每一天的平均准确率
+    for method_name, results in all_methods_results.items():
+        if results['mean_ensamble'] is None:
+            continue
+        print(f"\n方法: {method_name}")
+        for day, acc in enumerate(results['mean_ensamble'], start=1):
+            print(f"Day {day}: {acc*100:.2f}%")
+        overall_mean = np.mean(results['mean_ensamble'])
+        print(f"总体平均准确率: {overall_mean*100:.2f}%")
+
+
+
+def Test_time_visualizationClass_seeds_multiple_methods_4(class_num, trial_num, current_dir, data_name, log_paths, args, font_size=22):
+    # 确保log_paths是列表
+    method_paths = log_paths if isinstance(log_paths, list) else [log_paths]
+    
+    # 存储所有方法的结果
+    all_methods_results = {}
+    
+    # 处理每个方法
+    for method_path in method_paths:
+        if method_path in ["./logs/Baselines-WBCIC-SHU-3C-e300-b64/t3a-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/"]:
+            _class_num = 0
+        else:
+            _class_num = class_num
+
+        method_name = os.path.basename(method_path.rstrip('/'))
+        print(f"处理方法: {method_name}")
+        
+        # 查找该方法的seed文件
+        _pattern = re.compile(r'_seed_\d+_pred\.csv$')
+        csv_files = []
+        for _file_name in os.listdir(method_path):
+            if _file_name.endswith('.csv') and _pattern.search(_file_name):
+                full_path = os.path.join(method_path, _file_name)
+                csv_files.append(full_path)
+        
+        # 初始化存储结构
+        stats_ensamble = {
+            'mean_seeds': [],
+            'mean_ensamble': None,
+        }
+        
+        # 处理每个seed文件
+        for data_path in csv_files:
+            stats = Test_time_visualizationClass(
+                data_path, _class_num, trial_num, current_dir, data_name, 
+                imgdata_save=False  # 不保存中间结果
+            )
+            stats_ensamble['mean_seeds'].append(stats['mean'])
+        
+        # 计算跨seed的平均值
+        if stats_ensamble['mean_seeds']:
+            stats_ensamble['mean_seeds'] = np.array(stats_ensamble['mean_seeds'])
+            stats_ensamble['mean_ensamble'] = np.mean(stats_ensamble['mean_seeds'], axis=0)
+        
+        # 存储该方法的结果
+        all_methods_results[method_name] = stats_ensamble
+    
+    # 统计最大天数
+    max_days = 0
+    for results in all_methods_results.values():
+        if results['mean_ensamble'] is not None:
+            days = len(results['mean_ensamble'])
+            if days > max_days:
+                max_days = days
+
+    # 打印并收集结果
+    csv_rows = []
+    for method_name, results in all_methods_results.items():
+        if results['mean_ensamble'] is None:
+            continue
+        row = [method_name]
+        for acc in results['mean_ensamble']:
+            row.append(f"{acc*100:.2f}")
+        overall_mean = np.mean(results['mean_ensamble'])
+        row.append(f"{overall_mean*100:.2f}")
+        csv_rows.append(row)
+        # 打印
+        print(f"\n方法: {method_name}")
+        for day, acc in enumerate(results['mean_ensamble'], start=1):
+            print(f"Day {day}: {acc*100:.2f}%")
+        print(f"总体平均准确率: {overall_mean*100:.2f}%")
+
+    # 构建header
+    header = ["method"] + [f"day{d+1}" for d in range(max_days)] + ["overall_mean"]
+
+    # 对齐每行长度
+    for row in csv_rows:
+        while len(row) < len(header):
+            row.insert(-1, "")  # 在overall_mean前补空
+
+    # 写入csv
+    csv_path = os.path.join(current_dir, f"{data_name}_method_days_accuracy.csv")
+    with open(csv_path, "w", newline='', encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+        writer.writerows(csv_rows)
+    print(f"\n结果已保存到: {csv_path}")
+
+
 def method_name_trans(method_name):
     # return the transferred method
     if method_name in ["source-WBCIC-SHU-3C-EEGNet-4,2-e300-b64","Source-BNCI2014001-4-all-EEGNet-4,2-e300-b64"]:
@@ -701,6 +845,26 @@ if __name__ == '__main__':
     elif args.dataset_name == "WBCIC-SHU-3C":
         
         visualfile_trial = 300
+        """
         log_paths = ["./logs/Baselines-WBCIC-SHU-3C-e300-b64/source-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/", "./logs/Baselines-WBCIC-SHU-3C-e300-b64/proposed/proposed_50_BNoff_batch8stride8_CE_KL_lcs_ConsSamples_selection_twoStage_weighted_lr0.001-5-scale10"]
         save_path = "./visualization/methods_days/"
         Test_time_visualizationClass_seeds_multiple_methods_2(class_num=class_num, trial_num=visualfile_trial, current_dir=save_path, data_name=data_name, log_paths=log_paths, args=args, font_size=36)
+        """
+        log_paths = [
+            "./logs/Baselines-WBCIC-SHU-3C-e300-b64/source-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/", 
+            "./logs/Baselines-WBCIC-SHU-3C-e300-b64/bn-adapt-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/",
+            "./logs/Baselines-WBCIC-SHU-3C-e300-b64/tent-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/",
+            "./logs/Baselines-WBCIC-SHU-3C-e300-b64/pl-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/",
+            "./logs/Baselines-WBCIC-SHU-3C-e300-b64/t3a-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/",
+            "./logs/Baselines-WBCIC-SHU-3C-e300-b64/cotta-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/",
+            "./logs/Baselines-WBCIC-SHU-3C-e300-b64/eata-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/",
+            "./logs/Baselines-WBCIC-SHU-3C-e300-b64/sar-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/",
+            "./logs/Baselines-WBCIC-SHU-3C-e300-b64/rotta-WBCIC-SHU-3C-EEGNet-4,2-e300-b64-onlinelr0.001-1/",
+            "./logs/Baselines-WBCIC-SHU-3C-e300-b64/ttime-WBCIC-SHU-3C-EEGNet-4,2-e300-b64-4/",
+            "./logs/Baselines-WBCIC-SHU-3C-e300-b64/sotta-WBCIC-SHU-3C-EEGNet-4,2-e300-b64-onlinelr0.001-1/",
+            "./logs/Baselines-WBCIC-SHU-3C-e300-b64/motta-WBCIC-SHU-3C-EEGNet-4,2-e300-b64-1/",
+            "./logs/Baselines-WBCIC-SHU-3C-e300-b64/aea-WBCIC-SHU-3C-EEGNet-4,2-e300-b64-1/",
+            "./logs/Baselines-WBCIC-SHU-3C-e300-b64/proposed/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p21",
+            ]
+        save_path = "./visualization/methods_days/"
+        Test_time_visualizationClass_seeds_multiple_methods_4(class_num=class_num, trial_num=visualfile_trial, current_dir=save_path, data_name=data_name, log_paths=log_paths, args=args, font_size=36)
