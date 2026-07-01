@@ -164,6 +164,92 @@ def calc_pred_acc(result_path, seed, idx, capacity=64):
     return avg_acc, avg_acc1, avg_acc2, avg_acc3
 
 
+def review_visualization_1(result_path, seed, idx, capacity=64, pseduo_label=True, types='logits'):
+    dir_path = os.path.join(result_path, 'two_stage', f'seed{seed}_sub_idx{idx}')
+    file_list = sorted(glob.glob(os.path.join(dir_path, 'memory_buffer_instance_*.pt')))
+    if not file_list:
+        raise FileNotFoundError(f"No memory_buffer_instance_*.pt files found in {dir_path}")
+
+    for file_path in file_list:
+        if file_path.endswith('memory_buffer_instance_320.pt'):
+            filename = os.path.basename(file_path)
+            match = re.search(r'memory_buffer_instance_(\d+)\.pt', filename)
+            if match:
+                num_instance = int(match.group(1))
+            else:
+                num_instance = None
+
+            online_buffer_path = os.path.join(result_path, 'online_visulization_records', f'seed{seed}_sub_idx{idx}', f'online_buffer_instance_{num_instance}.pt')
+            online_buffer_data = torch.load(online_buffer_path, map_location='cpu')
+            true_labels = [_instance['label'] for _instance in online_buffer_data]
+            true_labels = torch.tensor(true_labels, dtype=torch.long)
+
+            online_memory_path = os.path.join(result_path, 'memory_visulization_records', f'seed{seed}_sub_idx{idx}', f'memory_buffer_instance_{num_instance}.pt')
+            online_memory_data = torch.load(online_memory_path, map_location='cpu')
+            true_labels_memory = []
+            for class_items in online_memory_data:
+                for item in class_items:
+                    true_labels_memory.append(item['label'])
+            true_labels_memory = torch.tensor(true_labels_memory, dtype=torch.long)
+
+            data = torch.load(file_path, map_location='cpu')
+            if types in ['logits','logit']:
+                preds_of_data_1 = data['preds_of_data_1']
+                preds_of_data_2 = data['preds_of_data_2']
+                preds_of_data_review_1 = data['preds_of_data_review_1']
+                preds_of_data_review_2 = data['preds_of_data_review_2']
+            
+            if preds_of_data_review_1.shape[0] < capacity // 2:
+                continue
+            preds_1 = torch.vstack((preds_of_data_1, preds_of_data_review_1)).cpu().numpy()
+            preds_2 = torch.vstack((preds_of_data_2, preds_of_data_review_2)).cpu().numpy()
+            if pseduo_label:
+                preds_labels_1 = np.argmax(preds_1, axis=1)
+                preds_labels_2 = np.argmax(preds_2, axis=1)
+            else:
+                true_labels_combined = torch.cat((true_labels, true_labels_memory), dim=0).cpu().numpy()
+
+            # t-SNE projection
+            tsne_1 = TSNE(n_components=2, random_state=42)
+            tsne_2 = TSNE(n_components=2, random_state=42)
+            preds_1_tsne = tsne_1.fit_transform(preds_1)
+            preds_2_tsne = tsne_2.fit_transform(preds_2)
+
+            # 保存文件夹
+            if pseduo_label:
+                figures_dir = os.path.join(result_path, 'two_stage_figures', f'seed{seed}_sub_idx{idx}_pesudo_label_1')
+            else:
+                figures_dir = os.path.join(result_path, 'two_stage_figures', f'seed{seed}_sub_idx{idx}_1')
+                
+            os.makedirs(figures_dir, exist_ok=True)
+
+            # Plot preds_1
+            plt.figure(figsize=(7, 6))
+            if pseduo_label:
+                scatter = plt.scatter(preds_1_tsne[:, 0], preds_1_tsne[:, 1], c=preds_labels_1, cmap='tab10', s=60)
+            else:
+                scatter = plt.scatter(preds_1_tsne[:, 0], preds_1_tsne[:, 1], c=true_labels_combined, cmap='tab10', s=60)
+            plt.xticks([])
+            plt.yticks([])
+            # plt.title(f't-SNE of preds_1 (instance {num_instance})')
+            plt.savefig(os.path.join(figures_dir, f'instance_{num_instance}_preds1.png'))
+            plt.savefig(os.path.join(figures_dir, f'instance_{num_instance}_preds1.svg'))
+            plt.close()
+
+            # Plot preds_2
+            plt.figure(figsize=(7, 6))
+            if pseduo_label:
+                scatter = plt.scatter(preds_2_tsne[:, 0], preds_2_tsne[:, 1], c=preds_labels_2, cmap='tab10', s=60)
+            else:
+                scatter = plt.scatter(preds_2_tsne[:, 0], preds_2_tsne[:, 1], c=true_labels_combined, cmap='tab10', s=60)
+            plt.xticks([])
+            plt.yticks([])
+            # plt.title(f't-SNE of preds_2 (instance {num_instance})')
+            plt.savefig(os.path.join(figures_dir, f'instance_{num_instance}_preds2.png'))
+            plt.savefig(os.path.join(figures_dir, f'instance_{num_instance}_preds2.svg'))
+            plt.close()        
+    
+
 def review_visualization(result_path, seed, idx, capacity=64, pseduo_label=True, types='logits'):
     dir_path = os.path.join(result_path, 'two_stage', f'seed{seed}_sub_idx{idx}')
     file_list = sorted(glob.glob(os.path.join(dir_path, 'memory_buffer_instance_*.pt')))
@@ -243,7 +329,7 @@ def review_visualization(result_path, seed, idx, capacity=64, pseduo_label=True,
         plt.title(f't-SNE of preds_2 (instance {num_instance})')
         plt.savefig(os.path.join(figures_dir, f'instance_{num_instance}_preds2.png'))
         plt.close()        
-    
+
 
 def review_visualization_feas(result_path, seed, idx, capacity=64, pseduo_label=True, types='feas'):
     dir_path = os.path.join(result_path, 'two_stage', f'seed{seed}_sub_idx{idx}')
@@ -338,7 +424,108 @@ def review_visualization_feas(result_path, seed, idx, capacity=64, pseduo_label=
         plt.colorbar(scatter)
         plt.title(f't-SNE of preds_2 (instance {num_instance})')
         plt.savefig(os.path.join(figures_dir, f'instance_{num_instance}_preds2.png'))
-        plt.close()        
+        plt.close()   
+
+
+def review_visualization_feas_1(result_path, seed, idx, capacity=64, pseduo_label=True, types='feas'):
+    dir_path = os.path.join(result_path, 'two_stage', f'seed{seed}_sub_idx{idx}')
+    file_list = sorted(glob.glob(os.path.join(dir_path, 'memory_buffer_instance_*.pt')))
+    if not file_list:
+        raise FileNotFoundError(f"No memory_buffer_instance_*.pt files found in {dir_path}")
+
+    for file_path in file_list:
+        if file_path.endswith('memory_buffer_instance_320.pt'):
+            filename = os.path.basename(file_path)
+            match = re.search(r'memory_buffer_instance_(\d+)\.pt', filename)
+            if match:
+                num_instance = int(match.group(1))
+            else:
+                num_instance = None
+
+            online_buffer_path = os.path.join(result_path, 'online_visulization_records', f'seed{seed}_sub_idx{idx}', f'online_buffer_instance_{num_instance}.pt')
+            online_buffer_data = torch.load(online_buffer_path, map_location='cpu')
+            true_labels = [_instance['label'] for _instance in online_buffer_data]
+            true_labels = torch.tensor(true_labels, dtype=torch.long)
+
+            online_memory_path = os.path.join(result_path, 'memory_visulization_records', f'seed{seed}_sub_idx{idx}', f'memory_buffer_instance_{num_instance}.pt')
+            online_memory_data = torch.load(online_memory_path, map_location='cpu')
+            true_labels_memory = []
+            for class_items in online_memory_data:
+                for item in class_items:
+                    true_labels_memory.append(item['label'])
+            true_labels_memory = torch.tensor(true_labels_memory, dtype=torch.long)
+
+            data = torch.load(file_path, map_location='cpu')
+            
+            preds_of_data_1 = data['preds_of_data_1']
+            preds_of_data_2 = data['preds_of_data_2']
+            preds_of_data_review_1 = data['preds_of_data_review_1']
+            preds_of_data_review_2 = data['preds_of_data_review_2']
+            feas_of_data_1 = data['feas_of_data_1']
+            feas_of_data_2 = data['feas_of_data_2']
+            feas_of_data_review_1 = data['feas_of_data_review_1']
+            feas_of_data_review_2 = data['feas_of_data_review_2']
+            
+            if preds_of_data_review_1.shape[0] < capacity // 2:
+                continue
+            preds_1 = torch.vstack((preds_of_data_1, preds_of_data_review_1)).cpu().numpy()
+            preds_2 = torch.vstack((preds_of_data_2, preds_of_data_review_2)).cpu().numpy()
+            feas_1 = torch.vstack((feas_of_data_1, feas_of_data_review_1)).cpu().numpy()
+            feas_2 = torch.vstack((feas_of_data_2, feas_of_data_review_2)).cpu().numpy()
+
+            if pseduo_label:
+                preds_labels_1 = np.argmax(preds_1, axis=1)
+                preds_labels_2 = np.argmax(preds_2, axis=1)
+            else:
+                true_labels_combined = torch.cat((true_labels, true_labels_memory), dim=0).cpu().numpy()
+
+            # t-SNE projection
+            if types in ['logits', 'logit']:
+                tsne_1 = TSNE(n_components=2, random_state=42)
+                tsne_2 = TSNE(n_components=2, random_state=42)
+                preds_1_tsne = tsne_1.fit_transform(preds_1)
+                preds_2_tsne = tsne_2.fit_transform(preds_2)
+                save_dir_name = 'two_stage_figures'
+            else:
+                tsne_1 = TSNE(n_components=2, random_state=42)
+                tsne_2 = TSNE(n_components=2, random_state=42)
+                preds_1_tsne = tsne_1.fit_transform(feas_1)
+                preds_2_tsne = tsne_2.fit_transform(feas_2)
+                save_dir_name = 'two_stage_figures_feas'
+
+            # 保存文件夹
+            if pseduo_label:
+                figures_dir = os.path.join(result_path, save_dir_name, f'seed{seed}_sub_idx{idx}_pesudo_label_1')
+            else:
+                figures_dir = os.path.join(result_path, save_dir_name, f'seed{seed}_sub_idx{idx}_1')
+                
+            os.makedirs(figures_dir, exist_ok=True)
+
+            # Plot preds_1
+            plt.figure(figsize=(7, 6))
+            if pseduo_label:
+                scatter = plt.scatter(preds_1_tsne[:, 0], preds_1_tsne[:, 1], c=preds_labels_1, cmap='tab10', s=60)
+            else:
+                scatter = plt.scatter(preds_1_tsne[:, 0], preds_1_tsne[:, 1], c=true_labels_combined, cmap='tab10', s=60)
+            plt.xticks([])
+            plt.yticks([])
+            # plt.title(f't-SNE of preds_1 (instance {num_instance})')
+            plt.savefig(os.path.join(figures_dir, f'instance_{num_instance}_preds1.png'))
+            plt.savefig(os.path.join(figures_dir, f'instance_{num_instance}_preds1.svg'))
+            plt.close()
+
+            # Plot preds_2
+            plt.figure(figsize=(7, 6))
+            if pseduo_label:
+                scatter = plt.scatter(preds_2_tsne[:, 0], preds_2_tsne[:, 1], c=preds_labels_2, cmap='tab10', s=60)
+            else:
+                scatter = plt.scatter(preds_2_tsne[:, 0], preds_2_tsne[:, 1], c=true_labels_combined, cmap='tab10', s=60)
+            plt.xticks([])
+            plt.yticks([])
+            # plt.title(f't-SNE of preds_2 (instance {num_instance})')
+            plt.savefig(os.path.join(figures_dir, f'instance_{num_instance}_preds2.png'))
+            plt.savefig(os.path.join(figures_dir, f'instance_{num_instance}_preds2.svg'))
+            plt.close()         
 
 if __name__ == '__main__':
 
@@ -638,14 +825,14 @@ if __name__ == '__main__':
             mean_sub_acc_1 = []
             mean_sub_acc_2 = []
             mean_sub_acc_3 = []
-            for idt in range(1):
+            for idt in [0]:
                 fix_random_seed(args.SEED)  # fix the seed
                 args.idt = idt
                 source_str = 'Except_S' + str(idt)
                 target_str = 'S' + str(idt)
                 args.task_str = source_str + '_2_' + target_str
                 info_str = '\n========================== Transfer to ' + target_str + ' =========================='
-                review_visualization_feas(str(args.result_dir), args.SEED, args.idt)
+                review_visualization_feas_1(str(args.result_dir), args.SEED, args.idt)
             
     
             

@@ -49,8 +49,8 @@
                 "--batch_size_online", "8",
                 "--stride", "8",
                 "--use_BN", "False",
-                "--loss_func", "CE_KL_review_weighted_10,ConsSamples_selection_two_stage_weighted_4_1_review_4_4_3",
-                //"--loss_func", "CE_KL_review_weighted_10_constrastive_visual",
+                //"--loss_func", "CE_KL_review_weighted_10,ConsSamples_selection_two_stage_weighted_4_1_review_4_4_3",
+                "--loss_func", "CE_KL_review_weighted_10_constrastive_visual_PCGrad",
                 //"--loss_func", "review_constrastive_loss",
                 //"--loss_func", "CE_KL",
                 //"--presudo_src", "False",
@@ -58,7 +58,7 @@
                 "--selection_ratio_review", "0.50",
                 "--updating_type", "entropy_review",
                 "--mt", "0.1",
-                "--loss_weights", "1.0, 1.0, 1.0",
+                "--loss_weights", "1.0, 4.0, 1.0",
                 "--scale", "10.0",
                 "--confidence_threshold", "0.45",
                 "--entropy_threshold", "0.40",
@@ -74,7 +74,7 @@
                 "--min_threshold", "0.4",
                 "--save_results", "False",
                 "--temp", "2.0",
-                "--two_stage", "True",
+                "--two_stage", "False",
                 "--warm_up", "capacity",
                 "--save_results_two_stage", "False",
                 "--grad_visual", "False"
@@ -380,7 +380,7 @@
             "name": "Python: buffer visulization",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/visualization/buffer_visualization.py",
+            "program": "${workspaceFolder}/visualization/image_painting_4.py",  //buffer_visualization
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -449,6 +449,7 @@
                 //"--log_path", "/data/datasets_Jyt/DeepTransferBCI/logs_backup/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-2-visualization_ts/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p1",
                 //"--log_path", "/data/datasets_Jyt/DeepTransferBCI/logs_backup/Baselines-004-test-e300-b64/proposed/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-visualization_ts/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p6",
                 //"--log_path", "/data/datasets_Jyt/DeepTransferBCI/logs_backup/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-ablation9-1-visualization_ts/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p1",
+                //"--log_path", "/data/datasets_Jyt/DeepTransferBCI/logs_backup/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-2-visualization_ts/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p1",
                 "--log_path", "/data/datasets_Jyt/DeepTransferBCI/logs_backup/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-ablation7-visualization/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p1",
                 "--use_pretrained_model", "True",
                 "--finetune", "False",
@@ -481,7 +482,7 @@
             "name": "Python: gradient visulization",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/visualization/gradient_visualization.py",
+            "program": "${workspaceFolder}/visualization/image_painting_5.py", //"gradient_visualization.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -493,6 +494,10 @@
                 "--data_path_MI", "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/",
                 //"--log_path", "/data/datasets_Jyt/DeepTransferBCI/logs_backup/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-2-visualization_ts/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p1",
                 //"--log_path", "/data/datasets_Jyt/DeepTransferBCI/logs_backup/Baselines-004-test-e300-b64/proposed/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-visualization_ts/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p6",
+                //"--log_path", "/data/datasets_Jyt/DeepTransferBCI/logs_backup/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-ablation9-2-visualization_gd/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p1",
+                //"--log_path", "/data/datasets_Jyt/DeepTransferBCI/logs_backup/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-ablation9-3-visualization_gd/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p2",
+                //"--log_path", "/data/datasets_Jyt/DeepTransferBCI/logs_backup/Baselines-004-test-e300-b64/proposed/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-ablation9-3-visualization_gd/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p3",
+                //"--log_path", "/data/datasets_Jyt/DeepTransferBCI/logs_backup/Baselines-WBCIC-SHU-3C-e300-b64/proposed/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-ablation9-3-visualization_gd/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p1",
                 "--log_path", "/data/datasets_Jyt/DeepTransferBCI/logs_backup/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-ablation9-1-visualization_gd/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p1",
                 "--use_pretrained_model", "True",
                 "--finetune", "False",

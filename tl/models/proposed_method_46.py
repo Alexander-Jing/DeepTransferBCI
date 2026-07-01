@@ -18,7 +18,7 @@ import time
 from tl.utils.memory_proposed_4 import DropMemoryBank_review_8, HUS, CSTU, FIFO, OnlineBufferInstance, DropMemoryBank_review_9
 from tl.utils.loss_proposed_2 import CE_KL, CE_KL_review_weighted_10, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_3, ConsSamples_selection_two_stage_weighted_4_1_modified, ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4, \
     ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4_feas, ConsSamples_selection_two_stage_weighted_4_1_modified_feas, CE_KL_review_weighted_10_constrastive, ConsSamples_selection_two_stage_weighted_4_1_modified_2, _entropy_samples, CE_KL_review_weighted_10_constrastive_fea, \
-    CE_KL_review_weighted_10_constrastive_visual, review_constrastive_loss
+    CE_KL_review_weighted_10_constrastive_visual, review_constrastive_loss, CE_KL_review_weighted_10_constrastive_visual_PCGrad
 from tl.utils.calibration_proposed import DynamicThresholdSelector
 from tl.utils.optimizer_proposed import build_optimizer
 
@@ -347,9 +347,9 @@ class proposed_TTA(nn.Module):
 
                         use_buffer_loss = self.memory.get_occupancy() >= int(self.capacity/2)
 
-                        if self.loss_name in ["CE_KL_review_weighted_10_constrastive", "CE_KL_review_weighted_10_constrastive_visual"]: 
+                        if self.loss_name in ["CE_KL_review_weighted_10_constrastive", "CE_KL_review_weighted_10_constrastive_visual", "CE_KL_review_weighted_10_constrastive_visual_PCGrad"]: 
                             if use_buffer_loss:
-                                if self.loss_name not in ["CE_KL_review_weighted_10_constrastive_visual"]:
+                                if self.loss_name not in ["CE_KL_review_weighted_10_constrastive_visual","CE_KL_review_weighted_10_constrastive_visual_PCGrad"]:
                                     loss = self.loss_fn(preds_of_data, preds_of_data_review, review_data_class, review_data_logits, mean_entropy, std_entropy)
                                 else:
                                     loss, loss_1, loss_2 = self.loss_fn(preds_of_data, preds_of_data_review, review_data_class, review_data_logits, mean_entropy, std_entropy)
@@ -420,11 +420,64 @@ class proposed_TTA(nn.Module):
                             save_path = os.path.join(save_dir, f'memory_buffer_instance_{self.num_instance}.pt')
                             torch.save(grad_info, save_path)
 
-                        self.optimizer.zero_grad(set_to_none=True)
+                        if self.loss_name in ["CE_KL_review_weighted_10_constrastive_visual_PCGrad"] and use_buffer_loss:
+                            # PCGrad for loss_1 and loss_2
+                            
+                            # 1. Compute gradients for loss_1 (g1)
+                            self.optimizer.zero_grad(set_to_none=True)
+                            loss_1.backward(retain_graph=True)
+                            
+                            grads_1 = []
+                            for p in self.model.parameters():
+                                if p.requires_grad:
+                                    grad = p.grad.detach().flatten() if p.grad is not None else torch.zeros_like(p).flatten()
+                                    grads_1.append(grad)
+                            grads_1 = torch.cat(grads_1)
 
-                        loss.backward()
+                            # 2. Compute gradients for loss_2 (g2)
+                            self.optimizer.zero_grad(set_to_none=True)
+                            loss_2.backward(retain_graph=True)
+                            
+                            grads_2 = []
+                            for p in self.model.parameters():
+                                if p.requires_grad:
+                                    grad = p.grad.detach().flatten() if p.grad is not None else torch.zeros_like(p).flatten()
+                                    grads_2.append(grad)
+                            grads_2 = torch.cat(grads_2)
 
-                        self.optimizer.step()
+                            # 3. PCGrad logic
+                            dot_product = (grads_1 * grads_2).sum()
+
+                            if dot_product < 0:
+                                # Conflict detected: project onto each other's normal plane
+                                g2_norm_sq = (grads_2.norm() ** 2) + 1e-8
+                                g1_norm_sq = (grads_1.norm() ** 2) + 1e-8
+                                
+                                g1_proj = grads_1 - (dot_product / g2_norm_sq) * grads_2
+                                g2_proj = grads_2 - (dot_product / g1_norm_sq) * grads_1
+                                
+                                final_grads = g1_proj + g2_proj
+                            else:
+                                # No conflict: sum them up
+                                final_grads = grads_1 + grads_2
+
+                            # 4. Write back the aggregated gradients to model parameters
+                            self.optimizer.zero_grad(set_to_none=True)
+                            index = 0
+                            for p in self.model.parameters():
+                                if p.requires_grad:
+                                    numel = p.numel()
+                                    p.grad = final_grads[index:index + numel].view_as(p).clone()
+                                    index += numel
+
+                            self.optimizer.step()
+                        else: 
+                            self.optimizer.zero_grad(set_to_none=True)
+
+                            loss.backward()
+
+                            self.optimizer.step()
+                            
 
                         if self.EnergyAlignment.save_results_two_stage: 
                             # model output after second stage updating
@@ -597,13 +650,15 @@ class proposed_TTA(nn.Module):
 def loss_prepare(loss_name, EnergyAlignment):
     
     if loss_name == 'CE_KL':
-        return CE_KL(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, temp=EnergyAlignment.temp)
+        return CE_KL(lambda_1=1.0, lambda_2=1.0, temp=EnergyAlignment.temp)
     elif loss_name == 'CE_KL_review_weighted_10':
         return CE_KL_review_weighted_10(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold, ratio=EnergyAlignment.ratio, thre_alpha=EnergyAlignment.thre_alpha)
     elif loss_name == 'CE_KL_review_weighted_10_constrastive':
         return CE_KL_review_weighted_10_constrastive(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold, ratio=EnergyAlignment.ratio, thre_alpha=EnergyAlignment.thre_alpha, ratio_review=EnergyAlignment.ratio_review)
     elif loss_name == 'CE_KL_review_weighted_10_constrastive_visual':
         return CE_KL_review_weighted_10_constrastive_visual(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold, ratio=EnergyAlignment.ratio, thre_alpha=EnergyAlignment.thre_alpha, ratio_review=EnergyAlignment.ratio_review)
+    elif loss_name == 'CE_KL_review_weighted_10_constrastive_visual_PCGrad':
+        return CE_KL_review_weighted_10_constrastive_visual_PCGrad(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold, ratio=EnergyAlignment.ratio, thre_alpha=EnergyAlignment.thre_alpha, ratio_review=EnergyAlignment.ratio_review)
     elif loss_name == 'CE_KL_review_weighted_10_constrastive_fea':
             return CE_KL_review_weighted_10_constrastive_fea(lambda_1=EnergyAlignment.lambda_1, lambda_2=EnergyAlignment.lambda_2, lambda_3=EnergyAlignment.lambda_3, temp=EnergyAlignment.temp, scale=EnergyAlignment.scale, confidence_threshold=EnergyAlignment.confidence_threshold, num_classes=EnergyAlignment.num_class, entropy_threshold=EnergyAlignment.entropy_threshold, ratio=EnergyAlignment.ratio, thre_alpha=EnergyAlignment.thre_alpha, ratio_review=EnergyAlignment.ratio_review)
     elif loss_name == 'review_constrastive_loss':

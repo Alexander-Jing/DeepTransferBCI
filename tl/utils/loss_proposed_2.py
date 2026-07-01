@@ -1066,6 +1066,64 @@ class CE_KL_review_weighted_10_constrastive_visual(nn.Module):
         return loss_sum, loss_sum_1, loss_sum_2
 
 
+class CE_KL_review_weighted_10_constrastive_visual_PCGrad(nn.Module):
+
+    def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, confidence_threshold=0.6, num_classes=4, entropy_threshold=0.5, ratio=0.75, weight_type='entropy', thre_alpha=1.0, gate_type='mean', ratio_review=0.25):
+        super().__init__()
+        self.temp = temp      # Temperature scaling factor
+        self.softplus = nn.Softplus()  # Activation function for loss calculation
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.lambda_3 = lambda_3
+        self.scale = scale
+        self.confidence_threshold = confidence_threshold  # 置信度阈值
+        self.num_classes = num_classes
+        self.entropy_threshold = entropy_threshold
+        self.ratio = ratio
+        self.weight_type = weight_type
+        self.thre_alpha = thre_alpha
+        self.gate_type = gate_type
+        self.ratio_review = ratio_review
+
+    def forward(self, logits, preds_of_data_review, review_data_class, review_data_logits, current_threshold, current_threshold_std):
+
+        # 判断memory_bank是否为空
+        if not review_data_logits.shape[0] == 0:
+
+            class_counts = torch.bincount(review_data_class, minlength=self.num_classes)
+            # 计算每个样本的权重：基于其类别的出现频率
+            epsilon = 1e-6  # 小常数防止除零
+            
+            # 为每个样本创建权重：权重 = 1 / 该类别的出现次数
+            sample_weights = 1.0 / (class_counts[review_data_class].float() + epsilon)
+            
+            # 可选：对权重进行归一化，使得权重和为1
+            sample_weights = sample_weights / sample_weights.sum()
+            
+            # 计算不带权重的CE loss（使用reduction='none'得到每个样本的损失）
+            ce_loss_per_sample = F.cross_entropy(
+                preds_of_data_review, 
+                review_data_class, 
+                reduction='none'
+            )
+            # 手动应用样本权重
+            weighted_ce_loss = (ce_loss_per_sample * sample_weights).sum()
+
+            cons_loss = contrastive_loss_samples_selection_review_2_2(logits, preds_of_data_review, ratio=self.ratio, ratio_review=self.ratio_review, temperature=self.temp, weight_type=self.weight_type)
+
+            loss_sum_1 = self.lambda_1 * (_entropy(logits) + 
+                _kl_loss(logits) + 
+                weighted_ce_loss)  
+            loss_sum_2 = self.lambda_2 * cons_loss
+
+            loss_sum = loss_sum_1 + loss_sum_2
+        else:
+            loss_sum = (self.lambda_1 * _entropy(logits) + 
+                    self.lambda_2 * _kl_loss(logits))
+        
+        return loss_sum, loss_sum_1, loss_sum_2
+
+
 class CE_KL_review_weighted_10_constrastive_fea(nn.Module):
 
     def __init__(self, lambda_1=1.0, lambda_2=1.0, lambda_3=1.0, temp=1.0, scale=5, confidence_threshold=0.6, num_classes=4, entropy_threshold=0.5, ratio=0.75, weight_type='entropy', thre_alpha=1.0, gate_type='mean', ratio_review=0.25):
