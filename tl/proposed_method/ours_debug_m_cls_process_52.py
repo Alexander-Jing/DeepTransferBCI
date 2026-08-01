@@ -16,7 +16,7 @@ from tl.utils.dataloader import read_mi_combine_tar
 from tl.utils.utils import fix_random_seed, cal_acc_comb, data_loader, cal_auc_comb, cal_score_online, makedir_if_not_exist, build_optimizer, save_features_predictions
 from tl.utils.alg_utils import EA, EA_online
 from scipy.linalg import fractional_matrix_power
-from tl.models.proposed_method_37 import proposed_TTA
+from tl.models.proposed_method_47 import proposed_TTA
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 import gc
@@ -53,7 +53,7 @@ def motta_func(loader, model, args, balanced=True):
                         confidence_threshold=args.confidence_threshold, uncertainty_threshold=args.uncertainty_threshold, prune_ratio=args.prune_ratio, pruning_strategy=args.pruning_strategy,
                         pruning_module=args.pruning_module, metric_name=args.metric_name, arch=args.backbone, use_BN=args.use_BN,
                         dataset=args.data_name, enable_robustBN=False, loss_name=args.loss_name, paras_loss={"lambda_info": 0.}, updating_type=args.updating_type, batch_size_online=args.test_batch, steps=args.steps, mt=args.mt, calibrate_probs=args.calibrate_probs, 
-                        memory_type=args.memory_type, memory_review=args.memory_review)
+                        memory_type=args.memory_type, memory_review=args.memory_review, result_path=str(args.result_dir), sub_information=Box({"idx":str(args.idt), "seed":str(args.SEED)}), use_buffer_ablation=args.use_buffer_ablation)
     proposed_TTA_model.cuda()
 
     # loop through test data stream one by one
@@ -107,7 +107,7 @@ def motta_func(loader, model, args, balanced=True):
 
         # print("tensor equal:", torch.equal(sample_test, sample_test_origin))  # for debug
 
-        fea_outputs, outputs = proposed_TTA_model(sample_test, sample_test_origin, sqrtRefEA)
+        fea_outputs, outputs = proposed_TTA_model(sample_test, sample_test_origin, sqrtRefEA, labels)
 
         softmax_out = nn.Softmax(dim=1)(outputs)
 
@@ -347,8 +347,14 @@ if __name__ == '__main__':
     parser.add_argument('--gate_type', type=str, default='mean', help='type of weights for gating')
     parser.add_argument('--buffer_selefction_type', type=str, default='confidence', help='type of weights for buffer selection')
     parser.add_argument('--min_threshold', type=float, default=0.40, help='minimum threshold for dynamic thresholding')
-    parser.add_argument('--temp', type=float, default=2.0, help='temprature for sharpening in the constrastive loss')
-    
+    parser.add_argument('--warm_up', type=str, default='capacity', help='type of warm up for memory buffer')
+    parser.add_argument('--temp', type=float, default=1.0, help='temprature for sharpening in the constrastive loss')
+    parser.add_argument('--two_stage', type=str2bool, default=True, help='update the model in a two stage form')
+    parser.add_argument('--save_results', type=str2bool, default=False, help='whether to save results for visulization')
+    parser.add_argument('--save_results_two_stage', type=str2bool, default=False, help='whether to save results of two stage for visulization')
+    parser.add_argument('--grad_visual', type=str2bool, default=False, help='whether to save results of grads for visulization')
+    parser.add_argument('--use_buffer_ablation', type=str2bool, default=True, help='whether to use the buffer for sample selection, if False, use the current batch (for ablation study)')
+
     args_parser = parser.parse_args()
 
     data_name = args_parser.dataset_name
@@ -391,7 +397,13 @@ if __name__ == '__main__':
     gate_type = args_parser.gate_type
     buffer_selefction_type = args_parser.buffer_selefction_type
     min_threshold = args_parser.min_threshold
+    warm_up = args_parser.warm_up
     temp = args_parser.temp
+    two_stage = args_parser.two_stage
+    save_results = args_parser.save_results
+    save_results_two_stage = args_parser.save_results_two_stage
+    grad_visual = args_parser.grad_visual
+    use_buffer_ablation = args_parser.use_buffer_ablation
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -472,7 +484,7 @@ if __name__ == '__main__':
                                   trial_num=trial_num, time_sample_num=time_sample_num, sample_rate=sample_rate,
                                   N=N, chn=chn, class_num=class_num, stride=stride, steps=steps, calc_time=calc_time,
                                   paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced, data_path_MI = data_path_MI,
-                                  finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param, mt=mt)
+                                  finetune=finetune,ft_volume=ft_volume,momentum=momentum,momentum_param=momentum_param, mt=mt, use_buffer_ablation=use_buffer_ablation)
 
         args.method = 'proposed_method'
         args.backbone = backbone
@@ -502,7 +514,7 @@ if __name__ == '__main__':
             "lr": args.lr_online,
             "beta": 0.9,        
             "wd": 0.0,
-            "two_stage": True,
+            "two_stage": two_stage,
         })
         args.EnergyAlignment = Box({
             "ratio":selection_ratio,
@@ -521,6 +533,10 @@ if __name__ == '__main__':
             "gate_type": gate_type,
             "buffer_selefction_type": buffer_selefction_type,
             "min_threshold": min_threshold,
+            "warm_up": warm_up,
+            "save_results": save_results,
+            "save_results_two_stage": save_results_two_stage,
+            "grad_visual":grad_visual,
         })
         # print(loss_weights[0], loss_weights[1], loss_weights[2])
         args.capacity = memory_capacity

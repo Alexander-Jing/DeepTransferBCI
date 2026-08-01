@@ -1893,7 +1893,10 @@ class ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4_feas(nn.Module):
         elif self.loss_weight_type in ['constant_0']:
             weight_ = 0.0
         else:
-            weight_ = 1.0
+            try:
+                weight_ = float(self.loss_weight_type)
+            except (ValueError, TypeError):
+                weight_ = 1.0
 
         
         if self.loss_weight_type in ['no_buffer']:

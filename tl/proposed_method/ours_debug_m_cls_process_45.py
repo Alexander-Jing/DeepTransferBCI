@@ -348,6 +348,7 @@ if __name__ == '__main__':
     parser.add_argument('--buffer_selefction_type', type=str, default='confidence', help='type of weights for buffer selection')
     parser.add_argument('--min_threshold', type=float, default=0.40, help='minimum threshold for dynamic thresholding')
     parser.add_argument('--warm_up', type=str, default='capacity', help='type of warm up for memory buffer')
+    parser.add_argument('--temp', type=float, default=1.0, help='temprature for sharpening in the constrastive loss')
     
     args_parser = parser.parse_args()
 
@@ -392,6 +393,7 @@ if __name__ == '__main__':
     buffer_selefction_type = args_parser.buffer_selefction_type
     min_threshold = args_parser.min_threshold
     warm_up = args_parser.warm_up
+    temp = args_parser.temp
 
     print('dataset_name: {}, type: {}'.format(data_name, type(data_name)))
     print('data_save: {}, type: {}'.format(data_save, type(data_save)))
@@ -509,7 +511,7 @@ if __name__ == '__main__':
             "lambda_1": loss_weights[0],
             "lambda_2": loss_weights[1],
             "lambda_3": loss_weights[2],
-            "temp": 2.0,
+            "temp": temp,
             "scale":scale,
             "confidence_threshold":confidence_threshold,
             "num_class":class_num,

@@ -25,7 +25,7 @@
             "name": "Python: TTA-BCNI2014001-4-all-proposed",  // choose the method you want to run
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_51.py",
+            "program": "${workspaceFolder}/tl/proposed_method/ours_debug_m_cls_process_52.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -50,15 +50,16 @@
                 "--stride", "8",
                 "--use_BN", "False",
                 //"--loss_func", "CE_KL_review_weighted_10,ConsSamples_selection_two_stage_weighted_4_1_review_4_4_3",
-                "--loss_func", "CE_KL_review_weighted_10_constrastive_visual_PCGrad",
+                //"--loss_func", "CE_KL_review_weighted_10_constrastive_visual_PCGrad",
                 //"--loss_func", "review_constrastive_loss",
                 //"--loss_func", "CE_KL",
+                "--loss_func", "ablation12,ablation12",
                 //"--presudo_src", "False",
                 "--selection_ratio", "0.75",
                 "--selection_ratio_review", "0.50",
                 "--updating_type", "entropy_review",
                 "--mt", "0.1",
-                "--loss_weights", "1.0, 4.0, 1.0",
+                "--loss_weights", "1.0, 1.0, 1.0",
                 "--scale", "10.0",
                 "--confidence_threshold", "0.45",
                 "--entropy_threshold", "0.40",
@@ -74,10 +75,11 @@
                 "--min_threshold", "0.4",
                 "--save_results", "False",
                 "--temp", "2.0",
-                "--two_stage", "False",
+                "--two_stage", "True",
                 "--warm_up", "capacity",
                 "--save_results_two_stage", "False",
-                "--grad_visual", "False"
+                "--grad_visual", "False",
+                "--use_buffer_ablation", "False",
             ],
             "env": {
                 "PYTHONPATH": "${PYTHONPATH}:${workspaceFolder}"
