@@ -6,7 +6,7 @@ workspace_folder="/home/jyt/workspace/DeepTransferBCI"
 cd $workspace_folder
 
 # Define the program path (注意: 原脚本中变量名有拼写错误 "progarm_path"，此处保持原样)
-progarm_path="tl/proposed_method/ours_debug_m_cls_process_43.py"
+progarm_path="tl/proposed_method/ours_debug_m_cls_process_45.py"
 
 # Set the PYTHONPATH environment variable
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
@@ -17,7 +17,7 @@ thre_alpha=(1.0)
 loss_weight_type=(20.0)
 
 # Base log path (without the trailing index)
-base_log_path="./logs/Baselines-004-test-e300-b64/proposed/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-ablation4-modified-1-new/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p"
+base_log_path="./logs/Baselines-001-test-e300-b64-debugs/ours_debug_m_cls_process_1-BNCI2014001-4-all-EEGNet-4,2-e300-b64-new/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-ablation7-modified-12-new/proposed_57_BNoff_batch8stride8_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p"
 
 # Initialize a counter for the parameter combinations
 index=1
@@ -34,7 +34,7 @@ for conf in "${confidence_thresholds[@]}"; do
 
           # Execute the Python script with the current parameters
           python3 $progarm_path \
-            --dataset_name "BNCI2014_004-test" \
+            --dataset_name "BNCI2014001-4-all" \
             --data_save "True" \
             --data_path "./data/" \
             --data_path_MI "None" \
@@ -52,9 +52,9 @@ for conf in "${confidence_thresholds[@]}"; do
             --backbone "EEGNet-4,2" \
             --param_runs "./runs_debug/" \
             --use_BN "False" \
-            --stride "1" \
+            --stride "8" \
             --batch_size_online "8" \
-            --loss_func "CE_KL_review_weighted_10,ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4" \
+            --loss_func "CE_KL_review_weighted_10,ConsSamples_selection_two_stage_weighted_4_1_review_4_4_4_feas" \
             --selection_ratio "0.75" \
             --selection_ratio_review "0.75" \
             --mt "0.9" \
@@ -63,15 +63,15 @@ for conf in "${confidence_thresholds[@]}"; do
             --scale "$los" \
             --confidence_threshold "$conf" \
             --entropy_threshold "0.50" \
-            --memory_type "HUS" \
+            --memory_type "DropMemoryBank_review_8" \
             --memory_review "get_memory" \
             --weight_type "entropy" \
             --memory_capacity "64" \
             --thre_alpha "$ent" \
-            --loss_weight_type "constant_1" \
+            --loss_weight_type "0.001" \
             --gate_type "mean" \
             --buffer_selefction_type "dynamic_confidence" \
-            --min_threshold "0.60" \
+            --min_threshold "0.40" \
             --temp "0.1" \
           # Increment the index for the next combination
           ((index++))

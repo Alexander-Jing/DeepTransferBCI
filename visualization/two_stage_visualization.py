@@ -171,7 +171,7 @@ def review_visualization_1(result_path, seed, idx, capacity=64, pseduo_label=Tru
         raise FileNotFoundError(f"No memory_buffer_instance_*.pt files found in {dir_path}")
 
     for file_path in file_list:
-        if file_path.endswith('memory_buffer_instance_320.pt'):
+        if file_path.endswith('memory_buffer_instance_392.pt'):
             filename = os.path.basename(file_path)
             match = re.search(r'memory_buffer_instance_(\d+)\.pt', filename)
             if match:
@@ -434,7 +434,7 @@ def review_visualization_feas_1(result_path, seed, idx, capacity=64, pseduo_labe
         raise FileNotFoundError(f"No memory_buffer_instance_*.pt files found in {dir_path}")
 
     for file_path in file_list:
-        if file_path.endswith('memory_buffer_instance_320.pt'):
+        if file_path.endswith('memory_buffer_instance_392.pt'):
             filename = os.path.basename(file_path)
             match = re.search(r'memory_buffer_instance_(\d+)\.pt', filename)
             if match:
@@ -832,7 +832,8 @@ if __name__ == '__main__':
                 target_str = 'S' + str(idt)
                 args.task_str = source_str + '_2_' + target_str
                 info_str = '\n========================== Transfer to ' + target_str + ' =========================='
-                review_visualization_feas_1(str(args.result_dir), args.SEED, args.idt)
+                #review_visualization_feas_1(str(args.result_dir), args.SEED, args.idt)
+                review_visualization_1(str(args.result_dir), args.SEED, args.idt)
             
     
             

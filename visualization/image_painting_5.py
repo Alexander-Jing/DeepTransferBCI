@@ -825,7 +825,7 @@ def grad_visual_avg_stacked(result_path, seed, sub_num, capacity=64):
     # --- 4. 坐标轴个性化设置 ---
     # 子图 (a)
     ax1.set_ylabel('Gradient Norms', fontsize=20, labelpad=15)
-    ax1.set_ylim(0, max(mean_1_smooth + std_1) * 1.1)
+    ax1.set_ylim(0, max(mean_1_smooth + std_1) * 1.3)
     ax1.yaxis.set_major_formatter(ticker.FormatStrFormatter('%d'))
     
     # 子图 (b)

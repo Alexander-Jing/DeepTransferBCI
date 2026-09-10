@@ -17,7 +17,7 @@ thre_alpha=(1.0)
 loss_weight_type=(20.0)
 
 # Base log path (without the trailing index)
-base_log_path="./logs/Baselines-004-test-e300-b64/proposed/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-ablation6-modified-new/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p"
+base_log_path="./logs/Baselines-004-test-e300-b64/proposed/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-ablation6-modified-1-new/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p"
 
 # Initialize a counter for the parameter combinations
 index=1
@@ -72,7 +72,7 @@ for conf in "${confidence_thresholds[@]}"; do
             --gate_type "mean" \
             --buffer_selefction_type "dynamic_confidence" \
             --min_threshold "0.60" \
-            --temp "0.25" \
+            --temp "0.1" \
           # Increment the index for the next combination
           ((index++))
           

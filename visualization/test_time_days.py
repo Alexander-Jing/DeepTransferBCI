@@ -742,6 +742,7 @@ def method_name_trans(method_name):
         return "ATS-TTA"
 
 
+"""
 if __name__ == '__main__':
 
     # parse args
@@ -845,11 +846,11 @@ if __name__ == '__main__':
     elif args.dataset_name == "WBCIC-SHU-3C":
         
         visualfile_trial = 300
-        """
-        log_paths = ["./logs/Baselines-WBCIC-SHU-3C-e300-b64/source-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/", "./logs/Baselines-WBCIC-SHU-3C-e300-b64/proposed/proposed_50_BNoff_batch8stride8_CE_KL_lcs_ConsSamples_selection_twoStage_weighted_lr0.001-5-scale10"]
-        save_path = "./visualization/methods_days/"
-        Test_time_visualizationClass_seeds_multiple_methods_2(class_num=class_num, trial_num=visualfile_trial, current_dir=save_path, data_name=data_name, log_paths=log_paths, args=args, font_size=36)
-        """
+        
+        #log_paths = ["./logs/Baselines-WBCIC-SHU-3C-e300-b64/source-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/", "./logs/Baselines-WBCIC-SHU-3C-e300-b64/proposed/proposed_50_BNoff_batch8stride8_CE_KL_lcs_ConsSamples_selection_twoStage_weighted_lr0.001-5-scale10"]
+        #save_path = "./visualization/methods_days/"
+        #Test_time_visualizationClass_seeds_multiple_methods_2(class_num=class_num, trial_num=visualfile_trial, current_dir=save_path, data_name=data_name, log_paths=log_paths, args=args, font_size=36)
+        
         log_paths = [
             "./logs/Baselines-WBCIC-SHU-3C-e300-b64/source-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/", 
             "./logs/Baselines-WBCIC-SHU-3C-e300-b64/bn-adapt-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/",
@@ -868,3 +869,31 @@ if __name__ == '__main__':
             ]
         save_path = "./visualization/methods_days/"
         Test_time_visualizationClass_seeds_multiple_methods_4(class_num=class_num, trial_num=visualfile_trial, current_dir=save_path, data_name=data_name, log_paths=log_paths, args=args, font_size=36)
+"""
+
+if __name__ == '__main__':
+    # ... 省略 argparse 部分，手动构造 args ...
+    import argparse
+    args = argparse.Namespace(dataset_name='WBCIC-SHU-3C', data_save=False)
+
+    data_name = 'WBCIC-SHU-3C'
+    class_num = 3
+    visualfile_trial = 300
+    save_path = "./visualization/methods_days/"
+
+    log_paths = [
+        #"./logs/Baselines-WBCIC-SHU-3C-e300-b64/proposed/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-1-new/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p3"
+        #"./logs/Baselines-WBCIC-SHU-3C-e300-b64/proposed/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-1-new/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p3"
+        #"./logs/Baselines-WBCIC-SHU-3C-e300-b64/eeg_otta-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/",
+        #"./logs/Baselines-WBCIC-SHU-3C-e300-b64/bft-d-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/",
+        "./logs/Baselines-WBCIC-SHU-3C-e300-b64/bft-a-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/",
+    ]
+
+    Test_time_visualizationClass_seeds_multiple_methods_3(
+        class_num=class_num,
+        trial_num=visualfile_trial,
+        current_dir=save_path,
+        data_name=data_name,
+        log_paths=log_paths,
+        args=args
+    )

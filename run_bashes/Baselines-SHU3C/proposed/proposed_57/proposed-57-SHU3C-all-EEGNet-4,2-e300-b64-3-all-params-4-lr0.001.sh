@@ -12,12 +12,12 @@ progarm_path="tl/proposed_method/ours_debug_m_cls_process_43.py"
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
 # Define the parameter values to iterate over
-confidence_thresholds=(0.55 0.60 0.65 0.66 0.70 0.75 0.80)
+confidence_thresholds=(0.60 0.65 0.66 0.70)
 thre_alpha=(1.0)
-loss_weight_type=(20.0)
+loss_weight_type=(10.0)
 
 # Base log path (without the trailing index)
-base_log_path="./logs/Baselines-004-test-e300-b64/proposed/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-ablation4-modified-1-new/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p"
+base_log_path="./logs/Baselines-WBCIC-SHU-3C-e300-b64/proposed/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-3-params-1-new-lr0.001/proposed_57_BNoff_batch8stride1_CE_KL_review_ConsSamples_selection_two_stage_weighted_4_1_double_lr0.001-p"
 
 # Initialize a counter for the parameter combinations
 index=1
@@ -34,10 +34,10 @@ for conf in "${confidence_thresholds[@]}"; do
 
           # Execute the Python script with the current parameters
           python3 $progarm_path \
-            --dataset_name "BNCI2014_004-test" \
+            --dataset_name "WBCIC-SHU-3C" \
             --data_save "True" \
             --data_path "./data/" \
-            --data_path_MI "None" \
+            --data_path_MI "/data/datasets_Jyt/WBCIC_SHU_3C/processeddata/processeddata/" \
             --log_path "$log_path" \
             --use_pretrained_model "True" \
             --finetune "False" \
@@ -63,7 +63,7 @@ for conf in "${confidence_thresholds[@]}"; do
             --scale "$los" \
             --confidence_threshold "$conf" \
             --entropy_threshold "0.50" \
-            --memory_type "HUS" \
+            --memory_type "DropMemoryBank_review_8" \
             --memory_review "get_memory" \
             --weight_type "entropy" \
             --memory_capacity "64" \
@@ -72,7 +72,6 @@ for conf in "${confidence_thresholds[@]}"; do
             --gate_type "mean" \
             --buffer_selefction_type "dynamic_confidence" \
             --min_threshold "0.60" \
-            --temp "0.1" \
           # Increment the index for the next combination
           ((index++))
           

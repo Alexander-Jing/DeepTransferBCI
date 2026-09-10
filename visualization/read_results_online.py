@@ -120,6 +120,7 @@ def compute_seed_subject_metrics_forShot(
 
 if __name__ == "__main__":
     
+    """
     # data_name = "WBCIC-SHU-3C"
     true_labels_dirs = "./logs/Baselines-WBCIC-SHU-3C-e300-b64/source-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/"
     data_name = "WBCIC-SHU-3C"
@@ -133,6 +134,84 @@ if __name__ == "__main__":
     mean_acc, mean_f1, overall_acc, overall_f1 = compute_seed_subject_metrics_forShot(
     predicts_dirs, true_labels_dirs, data_name, method, [1,2,3,4,5], subject_ids, class_num
     )
+    """
+
     
+    
+    
+    
+    """
+    base_dir = "./logs/Baselines-001-all-e300-b64/debugs/TTime_addtional-2-BNCI2014001-all-EEGNet-4,2-e300-b64/"
+    data_name   = "BNCI2014001-4-all"
+    method      = "T-TIME-addtional_test"
+    seeds       = [1, 2, 3, 4, 5]
+    class_num   = 4
+    subject_ids = list(range(9))
+
+    mean_acc, mean_f1, overall_acc, overall_f1 = compute_subject_metrics(
+        result_dir=base_dir,
+        data_name=data_name,
+        method=method,
+        seeds=seeds,
+        class_num=class_num,
+        subject_ids=subject_ids,
+    )
+
     print(f"Overall Mean Accuracy: {overall_acc:.4f}")
     print(f"Overall Mean F1 Score: {overall_f1:.4f}")
+    """
+    
+    
+    
+    
+    
+    
+    
+    base_dir = "./logs/Baselines-004-test-e300-b64/ttime-BNCI2014_004-test-EEGNet4,2-e300-b64-4/"
+    data_name   = "BNCI2014_004-test"
+    method      = "T-TIME"
+    seeds       = [1, 2, 3, 4, 5]
+    class_num   = 2
+    subject_ids = list(range(9))
+
+    mean_acc, mean_f1, overall_acc, overall_f1 = compute_subject_metrics(
+        result_dir=base_dir,
+        data_name=data_name,
+        method=method,
+        seeds=seeds,
+        class_num=class_num,
+        subject_ids=subject_ids,
+    )
+
+    print(f"Overall Mean Accuracy: {overall_acc:.4f}")
+    print(f"Overall Mean F1 Score: {overall_f1:.4f}")
+    
+    
+
+    
+    
+    
+    """
+    base_dir = "./logs/Baselines-WBCIC-SHU-3C-e300-b64/bft-a-WBCIC-SHU-3C-EEGNet-4,2-e300-b64/"
+    data_name   = "WBCIC-SHU-3C"
+    method      = "BFT-A"
+    seeds       = [1, 2, 3, 4, 5]
+    class_num   = 3
+    subject_ids = list(range(11))  # Subject_0 ~ Subject_10
+
+    mean_acc, mean_f1, overall_acc, overall_f1 = compute_subject_metrics(
+        result_dir=base_dir,
+        data_name=data_name,
+        method=method,
+        seeds=seeds,
+        class_num=class_num,
+        subject_ids=subject_ids,
+    )
+
+    print(f"Overall Mean Accuracy: {overall_acc:.4f}")
+    print(f"Overall Mean F1 Score: {overall_f1:.4f}")
+    """
+    
+    
+    
+
